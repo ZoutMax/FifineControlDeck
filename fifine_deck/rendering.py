@@ -92,16 +92,27 @@ def render_key(
 
 
 def _apply_glow(img: Image.Image) -> Image.Image:
-    """Pressed-key feedback: brighten and add a soft glowing border."""
+    """Pressed-key feedback: a bright glowing halo hugging the button border."""
     size = img.width
-    lit = ImageEnhance.Brightness(img.convert("RGB")).enhance(1.4)
-    glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    gd = ImageDraw.Draw(glow)
-    b = max(3, int(size * 0.07))
-    gd.rounded_rectangle([b // 2, b // 2, size - 1 - b // 2, size - 1 - b // 2],
-                         radius=int(size * 0.14), outline=(120, 205, 255, 255), width=b)
-    glow = glow.filter(ImageFilter.GaussianBlur(max(2, int(size * 0.05))))
-    out = Image.alpha_composite(lit.convert("RGBA"), glow)
+    # a touch brighter so the key reads as 'lit', but the halo is the effect
+    out = ImageEnhance.Brightness(img.convert("RGB")).enhance(1.12).convert("RGBA")
+    rad = int(size * 0.16)
+    inset = int(size * 0.05)
+    box = [inset, inset, size - 1 - inset, size - 1 - inset]
+
+    # 1) wide soft halo blurred around the border
+    halo = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(halo).rounded_rectangle(
+        box, radius=rad, outline=(90, 200, 255, 255), width=max(3, int(size * 0.10)))
+    halo = halo.filter(ImageFilter.GaussianBlur(max(2, int(size * 0.06))))
+    out = Image.alpha_composite(out, halo)
+
+    # 2) crisp bright ring on top for a defined halo edge
+    ring = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(ring).rounded_rectangle(
+        box, radius=rad, outline=(210, 240, 255, 235), width=max(2, int(size * 0.028)))
+    ring = ring.filter(ImageFilter.GaussianBlur(max(1, int(size * 0.012))))
+    out = Image.alpha_composite(out, ring)
     return out.convert("RGB")
 
 

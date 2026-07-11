@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import functools
+import json
+import os
 
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer
 from PyQt6.QtGui import QAction, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QPushButton, QSlider, QInputDialog, QMessageBox, QDockWidget,
-    QSystemTrayIcon, QMenu, QStatusBar, QScrollArea,
+    QSystemTrayIcon, QMenu, QStatusBar, QScrollArea, QFileDialog,
 )
 
 from .. import rendering, assets
@@ -72,6 +74,13 @@ class MainWindow(QMainWindow):
         m.addAction(hide_act)
         m.addAction(show_min)
         m.addSeparator()
+        export_act = QAction("Export config…", self)
+        export_act.triggered.connect(self._export_config)
+        import_act = QAction("Import config…", self)
+        import_act.triggered.connect(self._import_config)
+        m.addAction(export_act)
+        m.addAction(import_act)
+        m.addSeparator()
         # Start on login (hidden) toggle
         import os as _os
         from ..app import AUTOSTART_FILE, set_autostart
@@ -90,6 +99,61 @@ class MainWindow(QMainWindow):
     def _set_glow(self, on: bool):
         self.config.glow = bool(on)
         self._queue_save()
+
+    # -- config export / import -------------------------------------------
+    def _export_config(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export configuration", os.path.expanduser("~/fifine-deck-config.json"),
+            "JSON (*.json)")
+        if not path:
+            return
+        if not path.lower().endswith(".json"):
+            path += ".json"
+        try:
+            with open(path, "w") as f:
+                json.dump(self.config.to_dict(), f, indent=2)
+        except OSError as e:
+            QMessageBox.warning(self, "Export failed", str(e))
+            return
+        self.statusBar().showMessage(f"Exported configuration to {path}", 4000)
+
+    def _import_config(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import configuration", os.path.expanduser("~"), "JSON (*.json)")
+        if not path:
+            return
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            imported = DeckConfig.from_dict(data)
+            if not imported.profiles:
+                raise ValueError("no profiles in file")
+        except (OSError, ValueError, TypeError, KeyError, AttributeError,
+                json.JSONDecodeError) as e:
+            QMessageBox.warning(self, "Import failed",
+                                f"Not a valid configuration file:\n{e}")
+            return
+        if QMessageBox.question(
+                self, "Import configuration",
+                "Replace your current profiles, pages and settings with the "
+                "imported ones?") != QMessageBox.StandardButton.Yes:
+            return
+        # Mutate the existing config object in place so the controller keeps its
+        # reference.
+        self.config.brightness = imported.brightness
+        self.config.glow = imported.glow
+        self.config.profiles = imported.profiles
+        self.config.active_profile_id = imported.active_profile_id
+        self.controller.page_index = 0
+        self.glow_act.setChecked(self.config.glow)
+        self.bright.setValue(self.config.brightness)
+        self._reload_profiles()
+        self._rebuild_grid()
+        self.editor.clear()
+        self.controller.apply_brightness()
+        self.controller.render_page()
+        self.config.save()
+        self.statusBar().showMessage("Configuration imported", 4000)
 
     def show_and_raise(self):
         self.showNormal()
