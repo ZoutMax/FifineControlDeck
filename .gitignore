@@ -5,7 +5,9 @@ __pycache__/
 *.tmp
 .venv/
 build/
-/dist/
+# Ignore built packages except the stable-named "latest" we ship in the repo.
+dist/*
+!dist/fifine-control-deck_latest_amd64.deb
 *.egg-info/
 # local runtime artifacts
 /tmp/

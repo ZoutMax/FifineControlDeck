@@ -62,13 +62,15 @@ The status bar shows what was detected on your session.
 
 ## Install (.deb — recommended)
 
-Download the `.deb` from the
-[latest release](https://github.com/ZoutMax/fifine-control-deck-linux/releases)
-and install it like any normal application:
+Download and install in one line (the `.deb` is kept in the repo):
 
 ```bash
-sudo apt install ./fifine-control-deck_*_amd64.deb
+wget https://github.com/ZoutMax/fifine-control-deck-linux/raw/main/dist/fifine-control-deck_latest_amd64.deb
+sudo apt install ./fifine-control-deck_latest_amd64.deb
 ```
+
+Or grab a specific version from the
+[Releases page](https://github.com/ZoutMax/fifine-control-deck-linux/releases).
 
 This installs the app, a desktop launcher (**fifine Control Deck** appears in
 your app menu), the icon, and the udev rule. Make sure you're in the `plugdev`
