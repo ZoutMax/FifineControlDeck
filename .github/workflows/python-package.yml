@@ -1,56 +1,79 @@
-# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
-
+# Lint, offscreen smoke-test across Python versions, then build the .deb.
+# https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
 name: Python package
-     
-      on:
-        push:
-          branches: [ main ]
-        pull_request:
-          branches: [ main ]
 
-      jobs:
-        build:
-          runs-on: ubuntu-latest
-          strategy:
-            fail-fast: false
-            matrix:
-              # PyQt6 wheels aren't published for 3.14 yet; test 3.10–3.13.
-              python-version: ["3.10", "3.11", "3.12", "3.13"]
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
-          steps:
-            - uses: actions/checkout@v4
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # PyQt6 wheels aren't published for 3.14 yet; test 3.10–3.13.
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
-            - name: Set up Python ${{ matrix.python-version }}
-              uses: actions/setup-python@v5
-              with:
-                python-version: ${{ matrix.python-version }}
+    steps:
+      - uses: actions/checkout@v4
 
-            - name: Install system libraries (Qt + libudev for the transport .so)
-              run: |
-                sudo apt-get update
-                sudo apt-get install -y \
-                  libegl1 libgl1 libxkbcommon0 libdbus-1-3 \
-                  libudev1 '^libxcb.*-dev' libx11-xcb1 \
-                  libglib2.0-0 libfontconfig1 libfreetype6
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
-            - name: Install Python dependencies
-              run: |
-                python -m pip install --upgrade pip
-                pip install PyQt6 Pillow pyudev flake8
-                # If you add a requirements file / tests later:
-                # pip install -r requirements.txt pytest
+      - name: Install system libraries (Qt runtime + libudev for the transport .so)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3 libudev1 \
+            libglib2.0-0 libfontconfig1 libfreetype6 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libxkbcommon-x11-0 fonts-dejavu-core
 
-            - name: Lint with flake8
-              run: |
-                # Fail on real errors (syntax, undefined names); exclude the vendored SDK.
-                flake8 fifine_deck --exclude=fifine_deck/backend \
-                  --count --select=E9,F63,F7,F82 --show-source --statistics
-                # Style pass is advisory only.
-                flake8 fifine_deck --exclude=fifine_deck/backend \
-                  --count --exit-zero --max-line-length=100 --statistics
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 Pillow pyudev flake8
 
-            - name: Smoke test (offscreen)
-              env:
-                QT_QPA_PLATFORM: offscreen
-                QT_LOGGING_RULES: "*=false"
+      - name: Lint with flake8
+        run: |
+          # Fail on real errors (syntax, undefined names); skip the vendored SDK.
+          flake8 fifine_deck --exclude=fifine_deck/backend \
+            --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Style pass is advisory only.
+          flake8 fifine_deck --exclude=fifine_deck/backend \
+            --count --exit-zero --max-line-length=100 --statistics
+
+      - name: Regenerate icons
+        run: python tools/make_icons.py
+
+      - name: Smoke test (offscreen)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_LOGGING_RULES: "*=false"
+        run: python .github/smoke_test.py
+
+  package:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync dpkg-dev
+
+      - name: Build .deb
+        run: ./packaging/build-deb.sh 0.0.0-ci
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fifine-control-deck-deb
+          path: dist/*.deb
