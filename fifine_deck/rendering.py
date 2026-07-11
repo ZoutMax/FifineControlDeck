@@ -9,7 +9,7 @@ import io
 import os
 from functools import lru_cache
 
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter, ImageChops
 
 _FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -91,27 +91,37 @@ def render_key(
     return img
 
 
+def _rounded_mask(size: int, inset: int, radius: int) -> Image.Image:
+    m = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(m).rounded_rectangle(
+        [inset, inset, size - 1 - inset, size - 1 - inset],
+        radius=max(1, radius), fill=255)
+    return m
+
+
 def _apply_glow(img: Image.Image) -> Image.Image:
-    """Pressed-key feedback: a glowing line tracing the button's outline, so the
-    button looks encircled by a lit halo. Key content is left as-is."""
+    """Pressed-key feedback: a clean, even glowing ring around the button
+    outline. Built by subtracting two filled rounded rectangles (avoids the
+    hard-edged 'bars' PIL's rounded_rectangle(width=…) can leave on the sides)."""
     size = img.width
-    m = max(1, int(size * 0.02))               # line sits right at the edge
-    rad = int(size * 0.16)
-    box = [m, m, size - 1 - m, size - 1 - m]
     out = img.convert("RGBA")
+    inset = max(1, int(size * 0.02))
+    rad = int(size * 0.22)
+    line_w = max(2, int(size * 0.045))
 
-    # soft bloom behind the line so it reads as a glow, not a plain border
-    bloom = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    ImageDraw.Draw(bloom).rounded_rectangle(
-        box, radius=rad, outline=(70, 195, 255, 255), width=max(3, int(size * 0.045)))
-    bloom = bloom.filter(ImageFilter.GaussianBlur(max(2, int(size * 0.035))))
-    out = Image.alpha_composite(out, bloom)
+    # even ring mask = outer filled shape minus the inner filled shape
+    outer = _rounded_mask(size, inset, rad)
+    inner = _rounded_mask(size, inset + line_w, rad - line_w)
+    ring = ImageChops.subtract(outer, inner)
 
-    # crisp neon line following the button outline
-    line = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    ImageDraw.Draw(line).rounded_rectangle(
-        box, radius=rad, outline=(205, 240, 255, 255), width=max(2, int(size * 0.018)))
-    out = Image.alpha_composite(out, line)
+    color = Image.new("RGBA", (size, size), (110, 205, 255, 255))
+    ring_rgba = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ring_rgba.paste(color, (0, 0), ring)
+
+    # soft bloom, then the crisp ring on top
+    out = Image.alpha_composite(out, ring_rgba.filter(
+        ImageFilter.GaussianBlur(max(2, int(size * 0.03)))))
+    out = Image.alpha_composite(out, ring_rgba)
     return out.convert("RGB")
 
 
