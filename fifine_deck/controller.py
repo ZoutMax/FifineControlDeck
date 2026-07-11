@@ -16,6 +16,7 @@ import time
 from typing import Callable, Optional
 
 import os
+import queue
 
 from . import actions, rendering
 from .device import FifineDeck, register, DEVICE_PROFILE
@@ -35,6 +36,13 @@ class DeckController:
         self._listen_thread: Optional[threading.Thread] = None
         self._running = False
         self._gif_keys: set[int] = set()   # logical keys currently animated
+
+        # Actions run on a dedicated worker thread so a slow action (e.g. a
+        # multi-action with delays, or a blocking command) never stalls the
+        # SDK reader thread that delivers key events.
+        self._action_queue: queue.Queue = queue.Queue()
+        self._action_thread = threading.Thread(target=self._action_worker, daemon=True)
+        self._action_thread.start()
 
         # observer callbacks (optional)
         self.on_connect: Optional[Callable[[FifineDeck], None]] = None
@@ -105,17 +113,23 @@ class DeckController:
 
     def stop(self):
         self._running = False
-        dev = self.device
-        if dev:
-            try:
-                dev.set_key_callback(None)
-                time.sleep(0.05)
-                dev.clearAllIcon()
-                dev.refresh()
-                dev.close()
-            except Exception:
-                pass
-        self.device = None
+        self._action_queue.put(None)   # unblock + end the action worker
+        with self._lock:
+            dev = self.device
+            if dev:
+                try:
+                    dev.set_key_callback(None)
+                    time.sleep(0.05)
+                    # Stop animations first so the GIF loop can't repaint the
+                    # keys we are about to clear.
+                    dev.stop_gif_loop()
+                    self._gif_keys.clear()
+                    dev.clearAllIcon()
+                    dev.refresh()
+                    dev.close()
+                except Exception:
+                    pass
+            self.device = None
 
     @property
     def connected(self) -> bool:
@@ -132,25 +146,30 @@ class DeckController:
 
     # -- rendering ---------------------------------------------------------
     def render_key(self, index: int) -> None:
-        dev = self.device
-        if not dev:
-            return
-        kc = self.page().keys.get(index, KeyConfig())
-        is_gif = kc.icon.lower().endswith(".gif") and os.path.exists(kc.icon)
-        try:
-            if is_gif:
-                dev.set_key_gif(index, kc.icon)
-                self._gif_keys.add(index)
-            else:
-                if index in self._gif_keys:
-                    dev.clear_key_gif(index)
-                    self._gif_keys.discard(index)
-                img = rendering.render_key(
-                    dev.KEY_PIXEL_WIDTH, kc.label, kc.icon, kc.bg_color, kc.text_color)
-                dev.set_key_image_pil(index, img)
-            self._sync_gif_loop()
-        except Exception as e:
-            print(f"[controller] render key {index} failed: {e}", flush=True)
+        # Hold the lock for the whole body: all app-initiated device writes and
+        # _gif_keys mutations must be serialized across the GUI thread (edits)
+        # and the action-worker thread (page/profile switches). RLock keeps
+        # render_page -> render_key reentrant.
+        with self._lock:
+            dev = self.device
+            if not dev:
+                return
+            kc = self.page().keys.get(index, KeyConfig())
+            is_gif = kc.icon.lower().endswith(".gif") and os.path.exists(kc.icon)
+            try:
+                if is_gif:
+                    dev.set_key_gif(index, kc.icon)
+                    self._gif_keys.add(index)
+                else:
+                    if index in self._gif_keys:
+                        dev.clear_key_gif(index)
+                        self._gif_keys.discard(index)
+                    img = rendering.render_key(
+                        dev.KEY_PIXEL_WIDTH, kc.label, kc.icon, kc.bg_color, kc.text_color)
+                    dev.set_key_image_pil(index, img)
+                self._sync_gif_loop()
+            except Exception as e:
+                print(f"[controller] render key {index} failed: {e}", flush=True)
 
     def _sync_gif_loop(self) -> None:
         dev = self.device
@@ -187,6 +206,21 @@ class DeckController:
             self.on_page_changed()
 
     # -- input dispatch ----------------------------------------------------
+    def _dispatch(self, action):
+        """Queue an action to run on the worker thread (keeps input responsive)."""
+        if action and action.type != "none":
+            self._action_queue.put(action)
+
+    def _action_worker(self):
+        while True:
+            action = self._action_queue.get()
+            if action is None:
+                return
+            try:
+                actions.execute(action, self)
+            except Exception as e:   # never let the worker die
+                print(f"[controller] action worker error: {e}", flush=True)
+
     def _key_callback(self, device, event):
         if event.event_type == EventType.BUTTON:
             index = int(event.key.value)
@@ -195,8 +229,8 @@ class DeckController:
                 self.on_key_event(index, pressed)
             if pressed:
                 kc = self.page().keys.get(index)
-                if kc and kc.action.type != "none":
-                    actions.execute(kc.action, self)
+                if kc:
+                    self._dispatch(kc.action)
         elif event.event_type in (EventType.KNOB_ROTATE, EventType.KNOB_PRESS):
             self._knob_event(event)
 
@@ -210,10 +244,10 @@ class DeckController:
         if not kn:
             return
         if event.event_type == EventType.KNOB_PRESS and event.state == 1:
-            actions.execute(kn.press, self)
+            self._dispatch(kn.press)
         elif event.event_type == EventType.KNOB_ROTATE:
             act = kn.right if getattr(event.direction, "value", "") == "right" else kn.left
-            actions.execute(act, self)
+            self._dispatch(act)
 
     # -- ActionContext implementation -------------------------------------
     def switch_profile(self, profile_id: str) -> None:
@@ -221,6 +255,34 @@ class DeckController:
             self.config.active_profile_id = profile_id
             self.page_index = 0
             self.render_page()
+
+    def _rotate_profile(self, step: int) -> None:
+        """Scene Shift: move to the next/previous profile (wrapping)."""
+        profiles = self.config.profiles
+        if len(profiles) < 2:
+            return
+        ids = [p.id for p in profiles]
+        try:
+            i = ids.index(self.config.active_profile_id)
+        except ValueError:
+            i = 0
+        self.config.active_profile_id = ids[(i + step) % len(ids)]
+        self.page_index = 0
+        self.render_page()
+
+    def next_profile(self) -> None:
+        self._rotate_profile(1)
+
+    def prev_profile(self) -> None:
+        self._rotate_profile(-1)
+
+    def sleep_screen(self) -> None:
+        with self._lock:
+            if self.device:
+                try:
+                    self.device.transport.sleep()
+                except Exception as e:
+                    print(f"[controller] sleep failed: {e}", flush=True)
 
     def goto_page(self, index: int) -> None:
         self.page_index = index

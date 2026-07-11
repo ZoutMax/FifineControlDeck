@@ -24,6 +24,7 @@ class _Bridge(QObject):
     connected = pyqtSignal()
     disconnected = pyqtSignal()
     keyEvent = pyqtSignal(int, bool)
+    pageChanged = pyqtSignal()
 
 
 class MainWindow(QMainWindow):
@@ -37,13 +38,19 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("fifine Control Deck — Linux")
         self.resize(1000, 620)
 
+        # Let action editors offer a profile dropdown for the "switch profile" action.
+        from . import widgets as _widgets
+        _widgets.PROFILES_PROVIDER = lambda: self.config.profiles
+
         self.bridge = _Bridge()
         self.bridge.connected.connect(self._on_connected)
         self.bridge.disconnected.connect(self._on_disconnected)
         self.bridge.keyEvent.connect(self._on_key_event)
+        self.bridge.pageChanged.connect(self._on_external_page_change)
         controller.on_connect = lambda dev: self.bridge.connected.emit()
         controller.on_disconnect = lambda: self.bridge.disconnected.emit()
         controller.on_key_event = lambda i, p: self.bridge.keyEvent.emit(i, p)
+        controller.on_page_changed = lambda: self.bridge.pageChanged.emit()
 
         self._close_notified = False
         self._build_ui()
@@ -431,6 +438,15 @@ class MainWindow(QMainWindow):
         b = self.buttons.get(index)
         if b:
             b.flash(pressed)
+
+    def _on_external_page_change(self):
+        # A key/knob action switched the page or profile on the controller.
+        # Resync the profile/page combos and previews so GUI edits/deletes act
+        # on the page actually shown on the device (not a stale selection).
+        self._reload_profiles()          # also reloads pages from page_index
+        self._refresh_all_previews()
+        self.editor.clear()
+        self.selected_index = None
 
     def _set_status(self):
         from ..actions import environment_summary

@@ -209,6 +209,22 @@ class ActionParamsWidget(QWidget):
             if kind == "multiline":
                 w = QPlainTextEdit(); w.setPlainText(str(values.get(key, "")))
                 w.setFixedHeight(56); w.textChanged.connect(self._emit)
+            elif kind == "password":
+                w = QLineEdit(str(values.get(key, "")))
+                w.setEchoMode(QLineEdit.EchoMode.Password)
+                w.textChanged.connect(self._emit)
+            elif kind == "profiles":
+                w = QComboBox()
+                provider = globals().get("PROFILES_PROVIDER")
+                cur = str(values.get(key, ""))
+                if provider:
+                    for prof in provider():
+                        w.addItem(prof.name, prof.id)
+                    j = w.findData(cur)
+                    if j >= 0:
+                        w.setCurrentIndex(j)
+                w.currentIndexChanged.connect(self._emit)
+                w.setProperty("kind", "profiles")
             elif kind.startswith("choice:"):
                 w = QComboBox()
                 for opt in kind.split(":", 1)[1].split(","):
@@ -230,7 +246,11 @@ class ActionParamsWidget(QWidget):
             if isinstance(w, QPlainTextEdit):
                 out[k] = w.toPlainText()
             elif isinstance(w, QComboBox):
-                out[k] = w.currentText()
+                # profiles combo stores the profile id in item data
+                if w.property("kind") == "profiles":
+                    out[k] = w.currentData() or ""
+                else:
+                    out[k] = w.currentText()
             elif isinstance(w, QLineEdit):
                 out[k] = w.text()
         return out

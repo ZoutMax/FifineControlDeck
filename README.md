@@ -17,9 +17,12 @@ with profiles, multiple pages, a configuration GUI, and a system tray.
   **animated GIF keys**.
 - **Drag-and-drop Actions catalog** — drag an action from the sidebar onto a
   key (auto-assigns a matching icon + label).
-- Actions: launch app, run shell command, open URL/file, send hotkey, type
-  text, media control, volume up/down/mute, brightness, switch page/profile,
-  and multi-step actions.
+- Actions (modeled on the original): launch app, run shell command, open
+  URL/file, close application, send hotkey, type text, type password, media
+  control, volume up/down/mute, brightness, sleep screen, page next/prev/goto,
+  switch profile, next/previous profile (Scene Shift), and multi-step actions.
+  Key actions run on a worker thread, so a slow/delayed macro never blocks the
+  keypad.
 - **Knob/dial support** (press / rotate-left / rotate-right) on devices that
   have dials.
 - Multiple **profiles**, each with multiple **pages** (bind a key to

@@ -230,8 +230,10 @@ class DeckConfig:
         try:
             with open(path) as f:
                 return cls.from_dict(json.load(f))
-        except (json.JSONDecodeError, OSError):
-            # Corrupt config: back it up and start fresh rather than crash.
+        except (json.JSONDecodeError, OSError, AttributeError, ValueError,
+                TypeError, KeyError):
+            # Corrupt or structurally-invalid config (bad JSON *or* wrong shape):
+            # back it up and start fresh rather than crash on launch.
             try:
                 os.replace(path, path + ".bak")
             except OSError:

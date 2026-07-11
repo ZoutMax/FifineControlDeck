@@ -46,11 +46,14 @@ KEY_TOOL = next((t for t in _KEY_TOOLS if _has(t)), "")
 class ActionContext(Protocol):
     """Deck-side operations an action may request from the runtime controller."""
     def switch_profile(self, profile_id: str) -> None: ...
+    def next_profile(self) -> None: ...
+    def prev_profile(self) -> None: ...
     def goto_page(self, index: int) -> None: ...
     def next_page(self) -> None: ...
     def prev_page(self) -> None: ...
     def set_brightness(self, percent: int) -> None: ...
     def adjust_brightness(self, delta: int) -> None: ...
+    def sleep_screen(self) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -64,23 +67,29 @@ ACTION_TYPES: dict[str, dict] = {
     "open_url":      {"label": "Open website / file", "params": [("url", "text", "URL or path")]},
     "hotkey":        {"label": "Send hotkey", "params": [("keys", "text", "e.g. ctrl+shift+m")]},
     "text":          {"label": "Type text", "params": [("text", "multiline", "Text to type")]},
+    "password":      {"label": "Type password", "params": [("password", "password", "Password")]},
     "media":         {"label": "Media control", "params": [("cmd", "choice:play-pause,next,previous,stop", "Command")]},
     "volume":        {"label": "Volume", "params": [("cmd", "choice:up,down,mute", "Command"), ("step", "text", "Step % (up/down)")]},
+    "close_app":     {"label": "Close application", "params": [("target", "text", "App / window name")]},
     "next_page":     {"label": "Next page", "params": []},
     "prev_page":     {"label": "Previous page", "params": []},
     "goto_page":     {"label": "Go to page #", "params": [("page", "text", "Page number (1-based)")]},
-    "switch_profile": {"label": "Switch profile", "params": [("profile_id", "text", "Profile id")]},
+    "switch_profile": {"label": "Switch profile", "params": [("profile_id", "profiles", "Profile")]},
+    "next_profile":  {"label": "Next profile (Scene Shift)", "params": []},
+    "prev_profile":  {"label": "Previous profile", "params": []},
     "brightness":    {"label": "Brightness", "params": [("mode", "choice:set,up,down", "Mode"), ("value", "text", "Value / step")]},
+    "sleep_screen":  {"label": "Sleep screen", "params": []},
     "multi":         {"label": "Multi-action (steps)", "params": []},  # steps edited specially
 }
 
 
 # Catalog grouping for the drag-and-drop sidebar: (category, [action types]).
 ACTION_CATALOG = [
-    ("Application", ["launch_app", "run_command", "open_url"]),
-    ("Keyboard",    ["hotkey", "text"]),
+    ("Application", ["launch_app", "run_command", "open_url", "close_app"]),
+    ("Keyboard",    ["hotkey", "text", "password"]),
     ("Media",       ["media", "volume"]),
-    ("Deck",        ["next_page", "prev_page", "goto_page", "switch_profile", "brightness"]),
+    ("Deck",        ["next_page", "prev_page", "goto_page", "switch_profile",
+                     "next_profile", "prev_profile", "brightness", "sleep_screen"]),
     ("Advanced",    ["multi"]),
 ]
 
@@ -91,13 +100,18 @@ ACTION_DEFAULT_ICON = {
     "open_url": ("web", "Web"),
     "hotkey": ("dot", "Hotkey"),
     "text": ("dot", "Text"),
+    "password": ("lock", "Password"),
     "media": ("play", "Play"),
     "volume": ("volume_up", "Volume"),
+    "close_app": ("power", "Close"),
     "next_page": ("next_page", "Next"),
     "prev_page": ("prev_page", "Prev"),
     "goto_page": ("next_page", "Page"),
     "switch_profile": ("settings", "Profile"),
+    "next_profile": ("next_page", "Scene ▶"),
+    "prev_profile": ("prev_page", "Scene ◀"),
     "brightness": ("brightness_up", "Bright"),
+    "sleep_screen": ("dot", "Sleep"),
     "multi": ("star", "Multi"),
 }
 
@@ -190,6 +204,19 @@ def _type_text(text: str) -> None:
         subprocess.run(["ydotool", "type", "--", text], stderr=subprocess.DEVNULL)
 
 
+def _close_app(target: str) -> None:
+    """Close an app by window title/class (wmctrl) or process name (pkill)."""
+    target = target.strip()
+    if not target:
+        return
+    if _has("wmctrl"):
+        subprocess.run(["wmctrl", "-c", target], stderr=subprocess.DEVNULL)
+    elif _has("pkill"):
+        subprocess.run(["pkill", "-f", target], stderr=subprocess.DEVNULL)
+    else:
+        print("[action] close needs 'wmctrl' or 'pkill'", flush=True)
+
+
 def _media(cmd: str) -> None:
     if _has("playerctl"):
         subprocess.run(["playerctl", cmd], stderr=subprocess.DEVNULL)
@@ -247,10 +274,20 @@ def execute(action, context: ActionContext | None = None) -> None:
             _send_hotkey(p.get("keys", ""))
         elif t == "text":
             _type_text(p.get("text", ""))
+        elif t == "password":
+            _type_text(p.get("password", ""))
         elif t == "media":
             _media(p.get("cmd", "play-pause"))
         elif t == "volume":
             _volume(p.get("cmd", "up"), p.get("step", "5"))
+        elif t == "close_app":
+            _close_app(p.get("target", ""))
+        elif t == "sleep_screen" and context:
+            context.sleep_screen()
+        elif t == "next_profile" and context:
+            context.next_profile()
+        elif t == "prev_profile" and context:
+            context.prev_profile()
         elif t == "next_page" and context:
             context.next_page()
         elif t == "prev_page" and context:
