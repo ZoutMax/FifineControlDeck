@@ -62,7 +62,7 @@ class MainWindow(QMainWindow):
         self._rebuild_grid()
 
     def _build_menu(self):
-        m = self.menuBar().addMenu("&App")
+        m = self.menuBar().addMenu("&Options")
         hide_act = QAction("Hide to background", self)
         hide_act.setShortcut("Ctrl+W")
         hide_act.triggered.connect(self.close)
@@ -681,7 +681,7 @@ class MainWindow(QMainWindow):
                 "fifine Control Deck keeps running so your keys stay active.\n\n"
                 "• Re-open this window: launch “fifine Control Deck” again "
                 "(or run 'fifine-control-deck').\n"
-                "• Quit completely: App → Quit  (Ctrl+Q).")
+                "• Quit completely: Options → Quit  (Ctrl+Q).")
 
     def _quit(self):
         self.config.save()

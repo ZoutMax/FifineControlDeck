@@ -132,7 +132,7 @@ are active immediately. Open the window any time by launching the app again
 (it re-uses the running instance); close it to hide back to the background.
 
 ```bash
-fifine-control-deck --enable-autostart      # or App -> "Start on login (hidden)"
+fifine-control-deck --enable-autostart      # or Options -> "Start on login (hidden)"
 fifine-control-deck --disable-autostart     # turn it off
 ```
 
@@ -145,7 +145,7 @@ Stored at `~/.config/fifine-control-deck/config.json` (saved automatically, and
 kept `0600` since it can hold password actions). Built-in icons are referenced
 portably as `lib:<name>`, so an exported config carries them across machines;
 custom icons chosen with **File…** are referenced by absolute path. Use
-**App → Export/Import config** to back up or move your layout.
+**Options → Export/Import config** to back up or move your layout.
 
 ## Device profile
 
