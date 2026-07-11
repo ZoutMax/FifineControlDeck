@@ -5,7 +5,7 @@
 set -euo pipefail
 
 VERSION="${1:-0.1.0}"
-ARCH="amd64"
+ARCH="${2:-amd64}"        # amd64 | arm64
 PKG="fifine-control-deck"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 STAGE="$(mktemp -d)"
@@ -20,9 +20,15 @@ mkdir -p "$STAGE/$APPDIR"
 rsync -a --exclude='__pycache__' --exclude='*.pyc' \
       "$HERE/fifine_deck" "$STAGE/$APPDIR/"
 rsync -a "$HERE/assets" "$STAGE/$APPDIR/"
-# slim: drop Windows/macOS/arm transport binaries (this .deb is amd64 Linux)
-find "$STAGE/$APPDIR" -type f \( -name '*.dll' -o -name '*.dylib' \
-     -o -name 'libtransport_arm64.so' -o -name 'transport.dll' \) -delete 2>/dev/null || true
+# slim: keep only the Linux transport lib for THIS architecture.
+# (The Python loader picks libtransport.so on x86_64 and libtransport_arm64.so
+#  on aarch64, so each .deb ships exactly the one its CPU needs.)
+find "$STAGE/$APPDIR" -type f \( -name '*.dll' -o -name '*.dylib' \) -delete 2>/dev/null || true
+if [ "$ARCH" = "arm64" ]; then
+    find "$STAGE/$APPDIR" -type f -name 'libtransport.so' -delete 2>/dev/null || true
+else
+    find "$STAGE/$APPDIR" -type f -name 'libtransport_arm64.so' -delete 2>/dev/null || true
+fi
 
 # --- launcher ------------------------------------------------------------
 mkdir -p "$STAGE/usr/bin"
@@ -44,10 +50,12 @@ done
 dir="$STAGE/usr/share/icons/hicolor/512x512/apps"; mkdir -p "$dir"
 install -m 0644 "$HERE/assets/app/fifine-deck.png" "$dir/$PKG.png"
 
-# --- udev rule (merged-/usr location) ------------------------------------
-mkdir -p "$STAGE/usr/lib/udev/rules.d"
+# --- udev rule -----------------------------------------------------------
+# Use /lib/udev/rules.d: read by ALL udev versions (old non-merged-usr and
+# modern merged-usr distros alike), maximising cross-flavour compatibility.
+mkdir -p "$STAGE/lib/udev/rules.d"
 install -m 0644 "$HERE/packaging/99-fifine-deck.rules" \
-        "$STAGE/usr/lib/udev/rules.d/99-fifine-deck.rules"
+        "$STAGE/lib/udev/rules.d/99-fifine-deck.rules"
 
 # --- docs: copyright + changelog ----------------------------------------
 DOCDIR="$STAGE/usr/share/doc/$PKG"
@@ -98,7 +106,7 @@ Version: $VERSION
 Section: utils
 Priority: optional
 Architecture: $ARCH
-Depends: python3 (>= 3.10), python3-pyqt6, python3-pil, libc6, libstdc++6, libgcc-s1, libudev1
+Depends: python3 (>= 3.10), python3-pyqt6, python3-pil, libc6, libstdc++6, libgcc-s1 | libgcc1, libudev1
 Recommends: playerctl, ydotool, wireplumber | pulseaudio-utils, xdg-utils
 Installed-Size: $INSTALLED_KB
 Maintainer: ZoutMax <danielhoutmann@hotmail.com>

@@ -62,15 +62,25 @@ The status bar shows what was detected on your session.
 
 ## Install (.deb — recommended)
 
-Download and install in one line (the `.deb` is kept in the repo):
+Works on any Debian-family distro (Debian, Ubuntu, Linux Mint, Pop!_OS,
+elementary, Zorin, Raspberry Pi OS, …) on **amd64** or **arm64**. Download the
+package for your CPU and install it — this one-liner auto-detects the arch:
 
 ```bash
-wget https://github.com/ZoutMax/fifine-control-deck-linux/raw/main/dist/fifine-control-deck_latest_amd64.deb
-sudo apt install ./fifine-control-deck_latest_amd64.deb
+ARCH=$(dpkg --print-architecture)   # amd64 or arm64
+wget https://github.com/ZoutMax/fifine-control-deck-linux/raw/main/dist/fifine-control-deck_latest_${ARCH}.deb
+sudo apt install ./fifine-control-deck_latest_${ARCH}.deb
 ```
+
+(If `apt` is too old to install a local file, use
+`sudo dpkg -i fifine-control-deck_latest_${ARCH}.deb && sudo apt-get -f install`.)
 
 Or grab a specific version from the
 [Releases page](https://github.com/ZoutMax/fifine-control-deck-linux/releases).
+
+**Requirements:** Python ≥ 3.10 and PyQt6 (present on Debian 12+, Ubuntu 22.04+,
+Mint 21+ and newer). The bundled USB transport library needs only glibc ≥ 2.17,
+so it runs on essentially any current release.
 
 This installs the app, a desktop launcher (**fifine Control Deck** appears in
 your app menu), the icon, and the udev rule. Make sure you're in the `plugdev`
