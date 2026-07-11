@@ -86,7 +86,11 @@ class FifineDeck(StreamDock):
         return self._map.get(k, k)
 
     def decode_input_event(self, hardware_code: int, state: int) -> InputEvent:
-        logical = self._rmap.get(hardware_code, hardware_code)
+        # This device reports presses in plain reading order (1..KEY_COUNT),
+        # while key *images* are addressed through image_key_map. The map is an
+        # involution, so applying it to input would double-map and swap rows
+        # 1-5 <-> 11-15. Input is therefore identity.
+        logical = hardware_code
         if 1 <= logical <= self.KEY_COUNT:
             return InputEvent(
                 event_type=EventType.BUTTON,
