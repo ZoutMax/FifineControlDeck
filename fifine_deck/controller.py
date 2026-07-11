@@ -184,10 +184,10 @@ class DeckController:
             print(f"[controller] gif loop sync failed: {e}", flush=True)
 
     def render_page(self) -> None:
-        dev = self.device
-        if not dev:
-            return
         with self._lock:
+            dev = self.device
+            if not dev:
+                return
             # drop animations from the previous page before re-rendering
             for k in list(self._gif_keys):
                 try:
@@ -318,9 +318,22 @@ class DeckController:
         self.page_index = (self.page_index - 1) % n
         self.render_page()
 
+    def refresh(self) -> None:
+        """Push pending image changes to the device (thread-safe)."""
+        with self._lock:
+            if self.device:
+                try:
+                    self.device.refresh()
+                except Exception as e:
+                    print(f"[controller] refresh failed: {e}", flush=True)
+
     def apply_brightness(self) -> None:
-        if self.device:
-            self.device.set_brightness(self.config.brightness)
+        with self._lock:
+            if self.device:
+                try:
+                    self.device.set_brightness(self.config.brightness)
+                except Exception as e:
+                    print(f"[controller] brightness failed: {e}", flush=True)
 
     def set_brightness(self, percent: int) -> None:
         self.config.brightness = max(0, min(100, int(percent)))

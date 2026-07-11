@@ -54,7 +54,7 @@ class IconLibraryDialog(QDialog):
                 b.setStyleSheet("QToolButton{border:1px solid #333;border-radius:8px;"
                                 "background:#1f1f1f;font-size:10px;}"
                                 "QToolButton:hover{border-color:#409eff;}")
-                b.clicked.connect(lambda _, p=it["file"]: self._pick(p))
+                b.clicked.connect(lambda _, n=it["name"]: self._pick(assets.library_ref(n)))
                 grid.addWidget(b, i // 6, i % 6)
             vbox.addWidget(grid_host)
         vbox.addStretch()
@@ -433,7 +433,7 @@ class ActionEditor(QWidget):
         # but never overwrite a custom icon the user chose via File…
         cur_icon = self.icon_edit.text()
         if not cur_icon or assets.is_library_icon(cur_icon):
-            want = assets.library_path(default_icon_for(new_action)[0])
+            want = assets.library_ref(default_icon_for(new_action)[0])
             if want and want != cur_icon:
                 self._building = True
                 self.icon_edit.setText(want)

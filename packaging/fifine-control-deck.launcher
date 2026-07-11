@@ -1,4 +1,4 @@
 #!/bin/sh
 # Launcher for the system-installed fifine Control Deck.
-export PYTHONPATH="/usr/lib/fifine-control-deck:${PYTHONPATH}"
+export PYTHONPATH="/usr/lib/fifine-control-deck${PYTHONPATH:+:$PYTHONPATH}"
 exec python3 -m fifine_deck "$@"

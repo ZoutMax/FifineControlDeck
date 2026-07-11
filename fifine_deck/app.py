@@ -92,7 +92,10 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
     # IPC server: a second launch tells us to show the window (or quit).
     QLocalServer.removeServer(_IPC_NAME)  # clear any stale socket
     server = QLocalServer()
-    server.listen(_IPC_NAME)
+    if not server.listen(_IPC_NAME):
+        # Lost a startup race with another instance; hand off to it and exit.
+        if _signal_existing("show"):
+            return 0
 
     def _on_conn():
         conn = server.nextPendingConnection()

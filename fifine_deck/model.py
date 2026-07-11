@@ -223,6 +223,25 @@ class DeckConfig:
         with open(tmp, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
         os.replace(tmp, path)
+        # The config can hold secrets (password actions); keep it private.
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+
+    @staticmethod
+    def looks_like_config(data) -> bool:
+        """Structural sanity check for imported data (avoid wiping the live
+        config when the user picks an unrelated JSON file)."""
+        if not isinstance(data, dict):
+            return False
+        profiles = data.get("profiles")
+        if not isinstance(profiles, list) or not profiles:
+            return False
+        for p in profiles:
+            if not isinstance(p, dict) or not isinstance(p.get("pages"), list):
+                return False
+        return True
 
     @classmethod
     def load(cls, path: str = CONFIG_PATH) -> "DeckConfig":

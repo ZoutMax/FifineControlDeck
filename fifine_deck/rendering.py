@@ -49,6 +49,8 @@ def render_key(
 ) -> Image.Image:
     """Return an RGB PIL image (size x size), upright (no device rotation yet).
     If pressed, brighten the whole key as a simple press flash."""
+    from . import assets
+    icon_path = assets.resolve_icon(icon_path)
     img = Image.new("RGB", (size, size), _hex(bg_color))
 
     if icon_path and os.path.exists(icon_path):
@@ -68,10 +70,16 @@ def render_key(
 
     if label:
         draw = ImageDraw.Draw(img)
-        fs = max(10, int(size * (0.20 if icon_path else 0.24)))
+        base_fs = max(10, int(size * (0.20 if icon_path else 0.24)))
+        max_w = size - 6
+        # Shrink the font a little so a short label like "Bright +" stays on one
+        # line (matching the other keys) before we fall back to wrapping.
+        fs = base_fs
+        min_fs = max(8, int(base_fs * 0.6))
+        while fs > min_fs and draw.textlength(label, font=_font(fs)) > max_w:
+            fs -= 1
         font = _font(fs)
-        # wrap to fit width
-        lines = _wrap(draw, label, font, size - 8)
+        lines = _wrap(draw, label, font, max_w)
         line_h = fs + 2
         total_h = line_h * len(lines)
         y0 = (size - total_h) if icon_path else (size - total_h) // 2

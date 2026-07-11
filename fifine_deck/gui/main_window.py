@@ -125,9 +125,9 @@ class MainWindow(QMainWindow):
         try:
             with open(path) as f:
                 data = json.load(f)
+            if not DeckConfig.looks_like_config(data):
+                raise ValueError("this file does not look like a deck configuration")
             imported = DeckConfig.from_dict(data)
-            if not imported.profiles:
-                raise ValueError("no profiles in file")
         except (OSError, ValueError, TypeError, KeyError, AttributeError,
                 json.JSONDecodeError) as e:
             QMessageBox.warning(self, "Import failed",
@@ -136,8 +136,15 @@ class MainWindow(QMainWindow):
         if QMessageBox.question(
                 self, "Import configuration",
                 "Replace your current profiles, pages and settings with the "
-                "imported ones?") != QMessageBox.StandardButton.Yes:
+                "imported ones? Your current configuration is backed up first.") \
+                != QMessageBox.StandardButton.Yes:
             return
+        # Back up the current config before replacing it.
+        from ..model import CONFIG_PATH
+        try:
+            self.config.save(CONFIG_PATH + ".bak")
+        except Exception:
+            pass
         # Mutate the existing config object in place so the controller keeps its
         # reference.
         self.config.brightness = imported.brightness
@@ -495,7 +502,7 @@ class MainWindow(QMainWindow):
                 self.controller.render_key(i)
         if self.controller.connected:
             try:
-                self.controller.device.refresh()
+                self.controller.refresh()
             except Exception:
                 pass
         self._on_key_selected(dst)   # follow the key to its new slot
@@ -506,14 +513,14 @@ class MainWindow(QMainWindow):
         kc.action = Action(atype, {})
         icon_name, label = default_icon_for(kc.action)
         if icon_name and not kc.icon:
-            kc.icon = assets.library_path(icon_name)
+            kc.icon = assets.library_ref(icon_name)
         if label and not kc.label:
             kc.label = label
         self.buttons[index].update_preview(kc)
         if self.controller.connected:
             self.controller.render_key(index)
             try:
-                self.controller.device.refresh()
+                self.controller.refresh()
             except Exception:
                 pass
         self._on_key_selected(index)
@@ -548,7 +555,7 @@ class MainWindow(QMainWindow):
         if self.controller.connected:
             self.controller.render_key(idx)
             try:
-                self.controller.device.refresh()
+                self.controller.refresh()
             except Exception:
                 pass
         self._queue_save()

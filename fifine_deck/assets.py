@@ -14,6 +14,14 @@ def app_icon_path() -> str:
     return APP_ICON if os.path.exists(APP_ICON) else ""
 
 
+LIB_PREFIX = "lib:"
+
+
+def library_ref(name: str) -> str:
+    """Portable reference to a built-in icon, e.g. 'lib:mute'."""
+    return f"{LIB_PREFIX}{name}" if name else ""
+
+
 def library_path(name: str) -> str:
     """Absolute path of a built-in library icon by name, or '' if missing."""
     if not name:
@@ -22,12 +30,26 @@ def library_path(name: str) -> str:
     return p if os.path.exists(p) else ""
 
 
-def is_library_icon(path: str) -> bool:
-    """True if `path` is one of our built-in library icons (safe to auto-swap)."""
-    if not path:
+def resolve_icon(icon: str) -> str:
+    """Resolve a KeyConfig.icon value to a concrete filesystem path.
+    'lib:<name>' -> the bundled icon (install-independent); anything else is
+    treated as a literal path."""
+    if not icon:
+        return ""
+    if icon.startswith(LIB_PREFIX):
+        return library_path(icon[len(LIB_PREFIX):])
+    return icon
+
+
+def is_library_icon(icon: str) -> bool:
+    """True if `icon` is one of our built-in library icons (safe to auto-swap).
+    Accepts the portable 'lib:' form and legacy absolute paths in LIBRARY_DIR."""
+    if not icon:
         return False
+    if icon.startswith(LIB_PREFIX):
+        return True
     try:
-        return os.path.dirname(os.path.abspath(path)) == os.path.abspath(LIBRARY_DIR)
+        return os.path.dirname(os.path.abspath(icon)) == os.path.abspath(LIBRARY_DIR)
     except Exception:
         return False
 

@@ -72,8 +72,15 @@ wget https://github.com/ZoutMax/fifine-control-deck-linux/raw/main/dist/fifine-c
 sudo apt install ./fifine-control-deck_latest_${ARCH}.deb
 ```
 
-(If `apt` is too old to install a local file, use
-`sudo dpkg -i fifine-control-deck_latest_${ARCH}.deb && sudo apt-get -f install`.)
+`apt install ./…deb` **installs all dependencies automatically** — PyQt6 and
+Pillow, plus the optional helper tools (`playerctl`, `ydotool`, PipeWire's
+`wpctl`, `xdg-utils`) that power the media/hotkey/volume actions. Or, from a
+clone, just run **`./install.sh`** (auto-detects your architecture and adds you
+to the `plugdev` group).
+
+(A double-click in a graphical installer — GNOME Software, Discover, GDebi —
+also resolves dependencies. Plain `sudo dpkg -i …deb` does **not**; follow it
+with `sudo apt-get -f install`.)
 
 Or grab a specific version from the
 [Releases page](https://github.com/ZoutMax/fifine-control-deck-linux/releases).
@@ -133,8 +140,11 @@ Advanced: a headless (no-GUI) systemd **user** service is also provided in
 
 ## Configuration
 
-Stored at `~/.config/fifine-control-deck/config.json`; imported icons live in
-`~/.config/fifine-control-deck/icons/`. The GUI saves automatically.
+Stored at `~/.config/fifine-control-deck/config.json` (saved automatically, and
+kept `0600` since it can hold password actions). Built-in icons are referenced
+portably as `lib:<name>`, so an exported config carries them across machines;
+custom icons chosen with **File…** are referenced by absolute path. Use
+**App → Export/Import config** to back up or move your layout.
 
 ## Device profile
 

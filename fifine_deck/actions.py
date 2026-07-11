@@ -79,7 +79,6 @@ ACTION_TYPES: dict[str, dict] = {
     "prev_profile":  {"label": "Previous profile", "params": []},
     "brightness":    {"label": "Brightness", "params": [("mode", "choice:set,up,down", "Mode"), ("value", "text", "Value / step")]},
     "sleep_screen":  {"label": "Sleep screen", "params": []},
-    "multi":         {"label": "Multi-action (steps)", "params": []},  # steps edited specially
 }
 
 
@@ -90,7 +89,6 @@ ACTION_CATALOG = [
     ("Media",       ["media", "volume"]),
     ("Deck",        ["next_page", "prev_page", "goto_page", "switch_profile",
                      "next_profile", "prev_profile", "brightness", "sleep_screen"]),
-    ("Advanced",    ["multi"]),
 ]
 
 # A default library-icon name + label to auto-assign when an action is dropped.
@@ -112,7 +110,6 @@ ACTION_DEFAULT_ICON = {
     "prev_profile": ("prev_page", "Scene ◀"),
     "brightness": ("brightness_up", "Bright"),
     "sleep_screen": ("dot", "Sleep"),
-    "multi": ("star", "Multi"),
 }
 
 
@@ -138,6 +135,17 @@ def _popen_detached(args, shell=False):
         args, shell=shell, start_new_session=True,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
     )
+
+
+def _run(args, **kw):
+    """subprocess.run with a timeout + error guard so a hung helper (wpctl,
+    playerctl, xdotool, …) can never freeze the action worker thread."""
+    kw.setdefault("timeout", 8)
+    kw.setdefault("stderr", subprocess.DEVNULL)
+    try:
+        subprocess.run(args, **kw)
+    except Exception as e:
+        print(f"[action] command failed: {e}", flush=True)
 
 
 # Linux input-event key codes for translating hotkey names -> ydotool keycodes.
@@ -185,7 +193,7 @@ def _send_hotkey(combo: str) -> None:
             print("[action] no keystroke tool (install xdotool / ydotool / wtype)", flush=True)
         return
     if KEY_TOOL == "xdotool":
-        subprocess.run(["xdotool", "key", "--clearmodifiers", combo],
+        _run(["xdotool", "key", "--clearmodifiers", combo],
                        stderr=subprocess.DEVNULL)
     elif KEY_TOOL == "wtype":
         parts = [p.lower() for p in combo.split("+")]
@@ -198,7 +206,7 @@ def _send_hotkey(combo: str) -> None:
         for m in mods:
             args += ["-m", {"ctrl": "ctrl", "control": "ctrl", "alt": "alt",
                             "shift": "shift", "super": "logo", "meta": "logo"}.get(m, m)]
-        subprocess.run(args, stderr=subprocess.DEVNULL)
+        _run(args, stderr=subprocess.DEVNULL)
     elif KEY_TOOL == "ydotool":
         # ydotool needs numeric keycodes: press all down (in order), release up.
         codes = _ydotool_keycodes(combo)
@@ -206,19 +214,19 @@ def _send_hotkey(combo: str) -> None:
             print(f"[action] hotkey '{combo}': unknown key name for ydotool", flush=True)
             return
         seq = [f"{c}:1" for c in codes] + [f"{c}:0" for c in reversed(codes)]
-        subprocess.run(["ydotool", "key", *seq], stderr=subprocess.DEVNULL)
+        _run(["ydotool", "key", *seq], stderr=subprocess.DEVNULL)
 
 
 def _type_text(text: str) -> None:
     if not KEY_TOOL:
         return
     if KEY_TOOL == "xdotool":
-        subprocess.run(["xdotool", "type", "--clearmodifiers", "--", text],
+        _run(["xdotool", "type", "--clearmodifiers", "--", text],
                        stderr=subprocess.DEVNULL)
     elif KEY_TOOL == "wtype":
-        subprocess.run(["wtype", "--", text], stderr=subprocess.DEVNULL)
+        _run(["wtype", "--", text], stderr=subprocess.DEVNULL)
     elif KEY_TOOL == "ydotool":
-        subprocess.run(["ydotool", "type", "--", text], stderr=subprocess.DEVNULL)
+        _run(["ydotool", "type", "--", text], stderr=subprocess.DEVNULL)
 
 
 def _close_app(target: str) -> None:
@@ -227,16 +235,16 @@ def _close_app(target: str) -> None:
     if not target:
         return
     if _has("wmctrl"):
-        subprocess.run(["wmctrl", "-c", target], stderr=subprocess.DEVNULL)
+        _run(["wmctrl", "-c", target], stderr=subprocess.DEVNULL)
     elif _has("pkill"):
-        subprocess.run(["pkill", "-f", target], stderr=subprocess.DEVNULL)
+        _run(["pkill", "-f", target], stderr=subprocess.DEVNULL)
     else:
         print("[action] close needs 'wmctrl' or 'pkill'", flush=True)
 
 
 def _media(cmd: str) -> None:
     if _has("playerctl"):
-        subprocess.run(["playerctl", cmd], stderr=subprocess.DEVNULL)
+        _run(["playerctl", cmd], stderr=subprocess.DEVNULL)
     else:
         print("[action] media control needs 'playerctl'", flush=True)
 
@@ -251,19 +259,19 @@ def _volume(cmd: str, step: str) -> None:
         pct = 5
     if AUDIO == "pipewire":
         if cmd == "up":
-            subprocess.run(["wpctl", "set-volume", "-l", "1.5", SINK, f"{pct}%+"])
+            _run(["wpctl", "set-volume", "-l", "1.5", SINK, f"{pct}%+"])
         elif cmd == "down":
-            subprocess.run(["wpctl", "set-volume", SINK, f"{pct}%-"])
+            _run(["wpctl", "set-volume", SINK, f"{pct}%-"])
         elif cmd == "mute":
-            subprocess.run(["wpctl", "set-mute", SINK, "toggle"])
+            _run(["wpctl", "set-mute", SINK, "toggle"])
     elif AUDIO == "pulseaudio":
         s = "@DEFAULT_SINK@"
         if cmd == "up":
-            subprocess.run(["pactl", "set-sink-volume", s, f"+{pct}%"])
+            _run(["pactl", "set-sink-volume", s, f"+{pct}%"])
         elif cmd == "down":
-            subprocess.run(["pactl", "set-sink-volume", s, f"-{pct}%"])
+            _run(["pactl", "set-sink-volume", s, f"-{pct}%"])
         elif cmd == "mute":
-            subprocess.run(["pactl", "set-sink-mute", s, "toggle"])
+            _run(["pactl", "set-sink-mute", s, "toggle"])
     else:
         print("[action] volume control needs pipewire (wpctl) or pulseaudio (pactl)", flush=True)
 
