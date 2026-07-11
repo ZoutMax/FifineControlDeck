@@ -25,8 +25,9 @@ with profiles, multiple pages, a configuration GUI, and a system tray.
   keypad.
 - **Knob/dial support** (press / rotate-left / rotate-right) on devices that
   have dials.
-- Multiple **profiles**, each with multiple **pages** (bind a key to
-  next/prev/goto-page to build folders).
+- Multiple **profiles**, each with multiple **pages**, plus **folders** —
+  drop an *Open folder* action on a key, double-click it in the editor to go
+  in (a **Back** key returns); folders can nest and have their own pages.
 - Three-pane configuration GUI (actions catalog · live device grid · key
   settings) with a dark theme matching the original; optional system tray.
 - Optional headless daemon mode + systemd user service for autostart.

@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 
 from .. import rendering, assets
 from ..device import DEVICE_PROFILE
-from ..model import DeckConfig, Profile, Page, KeyConfig, Action
+from ..model import DeckConfig, Profile, Page, KeyConfig, Action, Folder
 from ..actions import default_icon_for
 from ..controller import DeckController
 from .widgets import KeyButton, ActionEditor, ActionCatalog, KnobEditor, ReorderDialog
@@ -212,6 +212,19 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.bright)
         root.addLayout(bar)
 
+        # breadcrumb / folder navigation row
+        crumb = QHBoxLayout()
+        self.back_btn = QPushButton("⬅ Back")
+        self.back_btn.setToolTip("Exit this folder")
+        self.back_btn.clicked.connect(self._folder_back)
+        self.back_btn.setVisible(False)
+        crumb.addWidget(self.back_btn)
+        self.breadcrumb = QLabel("")
+        self.breadcrumb.setStyleSheet("color:#9a9a9a;")
+        crumb.addWidget(self.breadcrumb)
+        crumb.addStretch()
+        root.addLayout(crumb)
+
         # key grid, centered on a "device" panel
         self.grid_host = QWidget()
         self.grid_host.setObjectName("deckPanel")
@@ -328,9 +341,11 @@ class MainWindow(QMainWindow):
             btn.selected.connect(self._on_key_selected)
             btn.actionDropped.connect(self._on_action_dropped)
             btn.keyMoved.connect(self._on_key_moved)
+            btn.openFolder.connect(self._on_open_folder)
             self.grid.addWidget(btn, r, c)
             self.buttons[idx] = btn
         self._refresh_all_previews()
+        self._update_breadcrumb()
 
     def _refresh_all_previews(self):
         page = self._page()
@@ -341,10 +356,12 @@ class MainWindow(QMainWindow):
     def _profile(self) -> Profile:
         return self.config.active_profile()
 
+    def _container(self):
+        """Current page-holder: the active profile, or a folder if navigated in."""
+        return self.controller.container()
+
     def _page(self) -> Page:
-        pages = self._profile().pages
-        i = min(self.controller.page_index, len(pages) - 1)
-        return pages[i]
+        return self.controller.page()
 
     # -- profile / page combo handling ------------------------------------
     def _reload_profiles(self):
@@ -360,7 +377,7 @@ class MainWindow(QMainWindow):
     def _reload_pages(self):
         self.page_combo.blockSignals(True)
         self.page_combo.clear()
-        for n, pg in enumerate(self._profile().pages):
+        for n, pg in enumerate(self._container().pages):
             # Number by position so entries are always unique and sequential
             # (stored names can be stale/duplicated after add/delete).
             label = f"Page {n + 1}"
@@ -375,9 +392,10 @@ class MainWindow(QMainWindow):
         pid = self.profile_combo.itemData(i)
         if pid:
             self.config.active_profile_id = pid
-            self.controller.page_index = 0
+            self.controller.reset_nav()      # exit any folder to the profile root
             self._reload_pages()
             self._refresh_all_previews()
+            self._update_breadcrumb()
             self.controller.render_page()
             self._queue_save()
 
@@ -417,28 +435,28 @@ class MainWindow(QMainWindow):
                 == QMessageBox.StandardButton.Yes:
             self.config.profiles.remove(p)
             self.config.active_profile_id = self.config.profiles[0].id
-            self.controller.page_index = 0
+            self.controller.reset_nav()
             self._reload_profiles()
             self._refresh_all_previews()
             self.controller.render_page()
             self._queue_save()
 
     def _add_page(self):
-        prof = self._profile()
-        prof.pages.append(Page(name="Page"))
+        cont = self._container()
+        cont.pages.append(Page(name="Page"))
         # jump to and show the new page
-        self.controller.page_index = len(prof.pages) - 1
+        self.controller.page_index = len(cont.pages) - 1
         self._reload_pages()
         self._refresh_all_previews()
         self.controller.render_page()
         self._queue_save()
 
     def _del_page(self):
-        prof = self._profile()
-        if len(prof.pages) <= 1:
+        cont = self._container()
+        if len(cont.pages) <= 1:
             QMessageBox.information(self, "Delete page", "At least one page is required.")
             return
-        del prof.pages[self.controller.page_index]
+        del cont.pages[self.controller.page_index]
         self.controller.page_index = 0
         self._reload_pages()
         self._refresh_all_previews()
@@ -446,20 +464,20 @@ class MainWindow(QMainWindow):
         self._queue_save()
 
     def _reorder_pages(self):
-        prof = self._profile()
-        if len(prof.pages) < 2:
+        cont = self._container()
+        if len(cont.pages) < 2:
             return
         labels = [self.page_combo.itemText(i) for i in range(self.page_combo.count())]
         dlg = ReorderDialog("Reorder pages", labels, self)
         if not dlg.exec():
             return
         order = dlg.order()
-        if order == list(range(len(prof.pages))):
+        if order == list(range(len(cont.pages))):
             return
-        current_id = prof.pages[self.controller.page_index].id
-        prof.pages = [prof.pages[i] for i in order]
+        current_id = cont.pages[self.controller.page_index].id
+        cont.pages = [cont.pages[i] for i in order]
         self.controller.page_index = next(
-            (i for i, p in enumerate(prof.pages) if p.id == current_id), 0)
+            (i for i, p in enumerate(cont.pages) if p.id == current_id), 0)
         self._reload_pages()
         self._refresh_all_previews()
         self.controller.render_page()
@@ -516,15 +534,56 @@ class MainWindow(QMainWindow):
             kc.icon = assets.library_ref(icon_name)
         if label and not kc.label:
             kc.label = label
+        self._ensure_folder(kc)
         self.buttons[index].update_preview(kc)
         if self.controller.connected:
             self.controller.render_key(index)
-            try:
-                self.controller.refresh()
-            except Exception:
-                pass
+            self.controller.refresh()
         self._on_key_selected(index)
         self._queue_save()
+
+    # -- folders -----------------------------------------------------------
+    def _ensure_folder(self, kc: KeyConfig):
+        """Create folder content (a page with a Back key) for a folder key."""
+        if kc.action.type == "open_folder" and kc.folder is None:
+            page = Page(name="Main")
+            last = DEVICE_PROFILE["key_count"]
+            back = page.key(last)
+            back.label = "Back"
+            back.icon = assets.library_ref("prev_page")
+            back.bg_color = "#26262c"
+            back.action = Action("folder_back", {})
+            kc.folder = Folder(name=kc.label or "Folder", pages=[page])
+        elif kc.action.type != "open_folder":
+            kc.folder = None
+
+    def _on_open_folder(self, index: int):
+        """Double-clicked a key: if it's a folder, navigate into it."""
+        kc = self._page().keys.get(index)
+        if kc and kc.action.type == "open_folder":
+            self._ensure_folder(kc)
+            self.controller.enter_folder(kc.folder)
+            # (controller fires on_page_changed -> _on_external_page_change resync)
+
+    def _folder_back(self):
+        self.controller.go_back()
+
+    def _folder_path(self):
+        """Folder objects from the profile root down to the current container."""
+        folders = [c for c, _ in self.controller._nav if c is not None]
+        if not self.controller.at_root():
+            folders.append(self.controller.container())
+        return folders
+
+    def _update_breadcrumb(self):
+        inside = not self.controller.at_root()
+        self.back_btn.setVisible(inside)
+        if inside:
+            crumbs = [self.controller.profile().name] + \
+                     [f.name for f in self._folder_path()]
+            self.breadcrumb.setText("  ▸  ".join(crumbs))
+        else:
+            self.breadcrumb.setText("")
 
     def _build_knobs(self):
         n = DEVICE_PROFILE.get("dial_count", 0)
@@ -551,13 +610,11 @@ class MainWindow(QMainWindow):
         if self.selected_index is None:
             return
         idx = self.selected_index
+        self._ensure_folder(self._page().key(idx))
         self.buttons[idx].update_preview(self._page().key(idx))
         if self.controller.connected:
             self.controller.render_key(idx)
-            try:
-                self.controller.refresh()
-            except Exception:
-                pass
+            self.controller.refresh()
         self._queue_save()
 
     def _on_brightness(self, v):
@@ -584,6 +641,7 @@ class MainWindow(QMainWindow):
         # on the page actually shown on the device (not a stale selection).
         self._reload_profiles()          # also reloads pages from page_index
         self._refresh_all_previews()
+        self._update_breadcrumb()
         self.editor.clear()
         self.selected_index = None
 

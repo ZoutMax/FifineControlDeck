@@ -59,28 +59,35 @@ class KeyConfig:
     bg_color: str = "#101020"
     text_color: str = "#ffffff"
     action: Action = field(default_factory=Action)
+    folder: "Folder | None" = None   # set when action == "open_folder"
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "label": self.label,
             "icon": self.icon,
             "bg_color": self.bg_color,
             "text_color": self.text_color,
             "action": self.action.to_dict(),
         }
+        if self.folder is not None:
+            d["folder"] = self.folder.to_dict()
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "KeyConfig":
+        fdata = d.get("folder")
         return cls(
             label=d.get("label", ""),
             icon=d.get("icon", ""),
             bg_color=d.get("bg_color", "#101020"),
             text_color=d.get("text_color", "#ffffff"),
             action=Action.from_dict(d.get("action")),
+            folder=Folder.from_dict(fdata) if fdata else None,
         )
 
     def is_empty(self) -> bool:
-        return not self.label and not self.icon and self.action.type == "none"
+        return (not self.label and not self.icon
+                and self.action.type == "none" and self.folder is None)
 
 
 @dataclass
@@ -143,6 +150,24 @@ class Page:
             keys={int(k): KeyConfig.from_dict(v) for k, v in d.get("keys", {}).items()},
             knobs={int(k): KnobConfig.from_dict(v) for k, v in d.get("knobs", {}).items()},
         )
+
+
+@dataclass
+class Folder:
+    """A nested key-set owned by a key (like a Stream Deck folder). Has its own
+    pages; enter it from a key, and a 'Back' key returns to the parent."""
+    name: str = "Folder"
+    id: str = field(default_factory=_new_id)
+    pages: list[Page] = field(default_factory=lambda: [Page(name="Main")])
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "id": self.id,
+                "pages": [p.to_dict() for p in self.pages]}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Folder":
+        pages = [Page.from_dict(p) for p in d.get("pages", [])] or [Page(name="Main")]
+        return cls(name=d.get("name", "Folder"), id=d.get("id", _new_id()), pages=pages)
 
 
 @dataclass

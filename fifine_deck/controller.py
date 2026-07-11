@@ -36,6 +36,8 @@ class DeckController:
         self._listen_thread: Optional[threading.Thread] = None
         self._running = False
         self._gif_keys: set[int] = set()   # logical keys currently animated
+        self._nav: list = []               # folder navigation stack
+        self._container = None             # current Folder, or None at profile root
 
         # Actions run on a dedicated worker thread so a slow action (e.g. a
         # multi-action with delays, or a blocking command) never stalls the
@@ -139,10 +141,41 @@ class DeckController:
     def profile(self) -> Profile:
         return self.config.active_profile()
 
+    def container(self):
+        """The page-holder currently shown: the active profile at the root, or
+        a Folder when navigated into one."""
+        return self._container if self._container is not None else self.config.active_profile()
+
+    def at_root(self) -> bool:
+        return not self._nav
+
     def page(self) -> Page:
-        pages = self.profile().pages
+        pages = self.container().pages
         self.page_index = max(0, min(self.page_index, len(pages) - 1))
         return pages[self.page_index]
+
+    # -- folder navigation -------------------------------------------------
+    def enter_folder(self, folder) -> None:
+        if folder is None:
+            return
+        self._nav.append((self._container, self.page_index))
+        self._container = folder
+        self.page_index = 0
+        self.render_page()
+
+    def go_back(self) -> None:
+        if not self._nav:
+            return
+        container, page_index = self._nav.pop()
+        self._container = container
+        self.page_index = page_index
+        self.render_page()
+
+    def reset_nav(self) -> None:
+        """Return to the root of the active profile (used on profile switch)."""
+        self._nav = []
+        self._container = None
+        self.page_index = 0
 
     # -- rendering ---------------------------------------------------------
     def render_key(self, index: int) -> None:
@@ -186,38 +219,47 @@ class DeckController:
     def render_page(self) -> None:
         with self._lock:
             dev = self.device
-            if not dev:
-                return
-            # drop animations from the previous page before re-rendering
-            for k in list(self._gif_keys):
+            if dev:
+                # drop animations from the previous page before re-rendering
+                for k in list(self._gif_keys):
+                    try:
+                        dev.clear_key_gif(k)
+                    except Exception:
+                        pass
+                self._gif_keys.clear()
+                for i in range(1, dev.KEY_COUNT + 1):
+                    self.render_key(i)
+                self._sync_gif_loop()
                 try:
-                    dev.clear_key_gif(k)
-                except Exception:
-                    pass
-            self._gif_keys.clear()
-            for i in range(1, dev.KEY_COUNT + 1):
-                self.render_key(i)
-            self._sync_gif_loop()
-            try:
-                dev.refresh()
-            except Exception as e:
-                print(f"[controller] refresh failed: {e}", flush=True)
+                    dev.refresh()
+                except Exception as e:
+                    print(f"[controller] refresh failed: {e}", flush=True)
+        # Fire even with no device so the GUI resyncs (e.g. editing folders offline).
         if self.on_page_changed:
             self.on_page_changed()
 
     # -- input dispatch ----------------------------------------------------
+    def _enqueue(self, task):
+        """Queue a 0-arg callable to run on the worker thread."""
+        self._action_queue.put(task)
+
     def _dispatch(self, action):
-        """Queue an action to run on the worker thread (keeps input responsive)."""
-        if action and action.type != "none":
-            self._action_queue.put(action)
+        """Queue an action (or folder navigation) on the worker thread so a slow
+        action can't stall the SDK reader thread."""
+        if not action or action.type == "none":
+            return
+        if action.type == "folder_back":
+            self._enqueue(self.go_back)
+        else:
+            self._enqueue(lambda a=action: actions.execute(a, self))
 
     def _action_worker(self):
         while True:
-            action = self._action_queue.get()
-            if action is None:
+            task = self._action_queue.get()
+            if task is None:
                 return
             try:
-                actions.execute(action, self)
+                task()
             except Exception as e:   # never let the worker die
                 print(f"[controller] action worker error: {e}", flush=True)
 
@@ -250,7 +292,11 @@ class DeckController:
             if pressed:
                 kc = self.page().keys.get(index)
                 if kc:
-                    self._dispatch(kc.action)
+                    if kc.action.type == "open_folder" and kc.folder is not None:
+                        folder = kc.folder
+                        self._enqueue(lambda f=folder: self.enter_folder(f))
+                    else:
+                        self._dispatch(kc.action)
         elif event.event_type in (EventType.KNOB_ROTATE, EventType.KNOB_PRESS):
             self._knob_event(event)
 
@@ -273,7 +319,7 @@ class DeckController:
     def switch_profile(self, profile_id: str) -> None:
         if self.config.profile_by_id(profile_id):
             self.config.active_profile_id = profile_id
-            self.page_index = 0
+            self.reset_nav()
             self.render_page()
 
     def _rotate_profile(self, step: int) -> None:
@@ -287,7 +333,7 @@ class DeckController:
         except ValueError:
             i = 0
         self.config.active_profile_id = ids[(i + step) % len(ids)]
-        self.page_index = 0
+        self.reset_nav()
         self.render_page()
 
     def next_profile(self) -> None:

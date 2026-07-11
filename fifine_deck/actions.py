@@ -79,6 +79,8 @@ ACTION_TYPES: dict[str, dict] = {
     "prev_profile":  {"label": "Previous profile", "params": []},
     "brightness":    {"label": "Brightness", "params": [("mode", "choice:set,up,down", "Mode"), ("value", "text", "Value / step")]},
     "sleep_screen":  {"label": "Sleep screen", "params": []},
+    "open_folder":   {"label": "Open folder", "params": []},
+    "folder_back":   {"label": "Back (exit folder)", "params": []},
 }
 
 
@@ -89,6 +91,7 @@ ACTION_CATALOG = [
     ("Media",       ["media", "volume"]),
     ("Deck",        ["next_page", "prev_page", "goto_page", "switch_profile",
                      "next_profile", "prev_profile", "brightness", "sleep_screen"]),
+    ("Folders",     ["open_folder", "folder_back"]),
 ]
 
 # A default library-icon name + label to auto-assign when an action is dropped.
@@ -110,6 +113,8 @@ ACTION_DEFAULT_ICON = {
     "prev_profile": ("prev_page", "Scene ◀"),
     "brightness": ("brightness_up", "Bright"),
     "sleep_screen": ("dot", "Sleep"),
+    "open_folder": ("folder", "Folder"),
+    "folder_back": ("prev_page", "Back"),
 }
 
 

@@ -105,6 +105,7 @@ class KeyButton(QToolButton):
     selected = pyqtSignal(int)
     actionDropped = pyqtSignal(int, str)   # (index, action_type)
     keyMoved = pyqtSignal(int, int)        # (source_index, target_index) swap
+    openFolder = pyqtSignal(int)           # double-click to enter a folder key
 
     def __init__(self, index: int, size: int = 96):
         super().__init__()
@@ -147,6 +148,10 @@ class KeyButton(QToolButton):
         if e.button() == Qt.MouseButton.LeftButton:
             self._press_pos = e.position().toPoint()
         super().mousePressEvent(e)
+
+    def mouseDoubleClickEvent(self, e):
+        self.openFolder.emit(self.index)
+        super().mouseDoubleClickEvent(e)
 
     def mouseMoveEvent(self, e):
         if not (e.buttons() & Qt.MouseButton.LeftButton) or self._press_pos is None:
