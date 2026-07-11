@@ -42,6 +42,15 @@ Optional, for specific actions (install what you use):
 
 The status bar shows what was detected on your session.
 
+> **ydotool note (Wayland):** hotkey/type actions use `ydotool`, which needs
+> its daemon running with access to `/dev/uinput`:
+> ```bash
+> sudo modprobe uinput
+> sudo ydotoold           # or run as a service; creates /tmp/.ydotool_socket
+> ```
+> On X11, `xdotool` works with no daemon. `playerctl` (media) and `wpctl`
+> (volume) need no daemon.
+
 ## Setup
 
 1. **Install the udev rule** (one time, needs root) so the device is usable
