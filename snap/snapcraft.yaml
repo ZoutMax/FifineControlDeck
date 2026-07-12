@@ -1,6 +1,7 @@
 name: fifine-control-deck
 base: core24
 version: '0.5.2'
+icon: snap/gui/fifine-control-deck.png
 title: fifine Control Deck
 license: MIT
 contact: https://github.com/ZoutMax/fifine-control-deck-linux/issues
