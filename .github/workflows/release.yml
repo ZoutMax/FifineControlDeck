@@ -1,0 +1,43 @@
+# Cut a GitHub Release when a version tag (v*) is pushed: build the .deb for
+# amd64 + arm64 and attach them, with auto-generated release notes.
+#
+# Usage:  ./release.sh 0.5.3 "what changed"     (tags v0.5.3 and pushes it)
+#   -> this workflow fires on the tag and publishes the release.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write        # required to create the release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync dpkg-dev
+
+      - name: Build .deb (amd64 + arm64)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          ./packaging/build-deb.sh "$VERSION" amd64
+          ./packaging/build-deb.sh "$VERSION" arm64
+          ls -la dist/*.deb
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/fifine-control-deck_${VERSION}_amd64.deb" \
+            "dist/fifine-control-deck_${VERSION}_arm64.deb" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes

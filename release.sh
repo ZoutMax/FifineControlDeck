@@ -44,6 +44,11 @@ cat <<EOF
 
 Publish when ready:
 
+  GITHUB RELEASE (automatic)
+    * .github/workflows/release.yml builds the amd64+arm64 .deb from this tag
+      and publishes a GitHub Release with them attached — no action needed.
+      Watch it:  gh run watch
+
   SNAP
     * If the GitHub builder is connected: an edge build (amd64+arm64) starts
       automatically from this push. Promote when happy:
