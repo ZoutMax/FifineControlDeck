@@ -340,7 +340,10 @@ def execute(action, context: ActionContext | None = None) -> None:
         elif t == "text":
             _type_text(p.get("text", ""))
         elif t == "password":
-            _type_text(p.get("password", ""))
+            from . import secret_store
+            pw = p.get("password") or (
+                secret_store.get(p["secret_id"]) if p.get("secret_id") else "")
+            _type_text(pw or "")
         elif t == "media":
             _media(p.get("cmd", "play-pause"))
         elif t == "volume":

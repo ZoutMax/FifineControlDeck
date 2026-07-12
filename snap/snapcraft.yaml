@@ -39,6 +39,7 @@ apps:
       - network
       - raw-usb            # USB device access (usbfs)
       - hardware-observe   # enumerate/inspect the device
+      - password-manager-service   # keyring for the 'type password' action
       - audio-playback     # volume/media actions
       - removable-media
 
@@ -51,6 +52,7 @@ parts:
       - PyQt6
       - Pillow
       - pyudev
+      - keyring
     stage-packages:
       - libudev1
       - libxcb-cursor0     # required by Qt6's xcb platform plugin

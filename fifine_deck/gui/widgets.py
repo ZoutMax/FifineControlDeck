@@ -291,8 +291,13 @@ class ActionParamsWidget(QWidget):
                 w = QPlainTextEdit(); w.setPlainText(str(values.get(key, "")))
                 w.setFixedHeight(56); w.textChanged.connect(self._emit)
             elif kind == "password":
-                w = QLineEdit(str(values.get(key, "")))
+                from .. import secret_store
+                sid = str(values.get("secret_id", ""))
+                initial = secret_store.get(sid) if sid else values.get(key, "")
+                w = QLineEdit(str(initial or ""))
                 w.setEchoMode(QLineEdit.EchoMode.Password)
+                w.setProperty("kind", "password")
+                w.setProperty("secret_id", sid)
                 w.textChanged.connect(self._emit)
             elif kind == "profiles":
                 w = QComboBox()
@@ -335,8 +340,27 @@ class ActionParamsWidget(QWidget):
                 else:
                     out[k] = w.currentText()
             elif isinstance(w, QLineEdit):
-                out[k] = w.text()
+                if w.property("kind") == "password":
+                    self._collect_password(w, out)
+                else:
+                    out[k] = w.text()
         return out
+
+    def _collect_password(self, w, out):
+        """Store the password in the OS keyring and put only its id in the
+        config; fall back to plaintext if no keyring backend is available."""
+        from .. import secret_store
+        text = w.text()
+        if not text:
+            return
+        sid = w.property("secret_id") or ""
+        if not sid:
+            sid = secret_store.new_id()
+        if secret_store.store(sid, text):
+            w.setProperty("secret_id", sid)
+            out["secret_id"] = sid
+        else:
+            out["password"] = text
 
     def _emit(self, *_):
         if not self._building:
