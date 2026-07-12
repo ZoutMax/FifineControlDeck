@@ -13,6 +13,7 @@ with profiles, multiple pages, a configuration GUI, and a system tray.
 
 ## Links
 
+- **Website:** <https://zoutmax.github.io/fifine-control-deck-linux/>
 - **Snap Store** (Ubuntu App Center): <https://snapcraft.io/fifine-control-deck>
   — `sudo snap install fifine-control-deck`
 - **Launchpad PPA** (apt): <https://launchpad.net/~zoutmax/+archive/ubuntu/fifine>
