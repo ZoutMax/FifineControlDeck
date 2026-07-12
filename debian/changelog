@@ -1,3 +1,11 @@
+fifine-control-deck (0.5.4) noble; urgency=medium
+
+  * Pro-quality pass: controller test suite + mock device, logging
+    framework, mypy in CI, password->keyring,
+    CHANGELOG/CONTRIBUTING/issue templates/provenance
+
+ -- ZoutMax <150600436+ZoutMax@users.noreply.github.com>  Sun, 12 Jul 2026 12:19:28 +0200
+
 fifine-control-deck (0.5.3ppa1) resolute; urgency=medium
 
   * Build for Ubuntu 26.04 (resolute).
