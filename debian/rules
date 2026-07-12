@@ -17,6 +17,8 @@ override_dh_auto_install:
 	install -d $(APPDIR)
 	cp -r fifine_deck $(APPDIR)/
 	cp -r assets $(APPDIR)/
+	# listing screenshots/banner are not runtime assets
+	rm -rf $(APPDIR)/assets/store
 	# keep only the transport lib for the build architecture
 	find $(APPDIR) -type f \( -name '*.dll' -o -name '*.dylib' \) -delete
 	if [ "$(DEB_HOST_ARCH)" = "arm64" ]; then \
@@ -31,6 +33,9 @@ override_dh_auto_install:
 	# desktop entry
 	install -Dm644 packaging/fifine-control-deck.desktop \
 	    $(PKGDIR)/usr/share/applications/fifine-control-deck.desktop
+	# AppStream metainfo (rich GNOME Software / App Center listing)
+	install -Dm644 packaging/io.github.zoutmax.FifineControlDeck.metainfo.xml \
+	    $(PKGDIR)/usr/share/metainfo/io.github.zoutmax.FifineControlDeck.metainfo.xml
 	# hicolor icons
 	set -e; for sz in 16 24 32 48 64 128 256; do \
 	    install -Dm644 assets/app/fifine-deck-$$sz.png \

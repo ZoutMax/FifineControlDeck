@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.zoutmax.FifineControlDeck</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>fifine Control Deck</name>
+  <summary>Control a Stream Dock style macro keypad</summary>
+
+  <description>
+    <p>
+      A native Linux control application for the fifine Control Deck — a
+      Mirabox / Hotspot "Stream Dock" style macro keypad with per-key LCDs
+      (USB 3142:0060).
+    </p>
+    <p>
+      Draw icons and labels on the keys and bind them to actions: launch apps,
+      send hotkeys, type text, media and volume control, run scripts,
+      brightness, page and profile switching, folders and multi-step macros —
+      via a PyQt6 configuration GUI.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">fifine-control-deck.desktop</launchable>
+
+  <url type="homepage">https://zoutmax.github.io/fifine-control-deck-linux/</url>
+  <url type="bugtracker">https://github.com/ZoutMax/fifine-control-deck-linux/issues</url>
+  <url type="vcs-browser">https://github.com/ZoutMax/fifine-control-deck-linux</url>
+
+  <developer id="io.github.zoutmax">
+    <name>Daniel Houtmann</name>
+  </developer>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/ZoutMax/fifine-control-deck-linux/main/assets/store/screenshot-01-overview.png</image>
+      <caption>Actions catalog, the live key grid, and the key-settings panel</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/ZoutMax/fifine-control-deck-linux/main/assets/store/screenshot-02-editor.png</image>
+      <caption>Editing a key: icon, colours, label and the assigned action</caption>
+    </screenshot>
+  </screenshots>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.5.2" date="2026-07-12">
+      <description>
+        <p>Folders, multi-action editor, production hardening; amd64 and arm64.</p>
+      </description>
+    </release>
+  </releases>
+</component>

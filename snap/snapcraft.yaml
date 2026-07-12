@@ -60,6 +60,7 @@ parts:
       mkdir -p "$dest"
       cp -r "$CRAFT_PART_SRC/fifine_deck" "$dest/"
       cp -r "$CRAFT_PART_SRC/assets" "$dest/"
+      rm -rf "$dest/assets/store"   # listing screenshots/banner — not runtime assets
       # drop non-Linux / other-arch transport binaries to slim the snap
       find "$dest" -type f \( -name '*.dll' -o -name '*.dylib' \) -delete || true
 

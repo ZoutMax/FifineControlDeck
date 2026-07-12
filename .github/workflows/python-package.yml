@@ -70,7 +70,12 @@ jobs:
       - name: Install packaging tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y rsync dpkg-dev
+          sudo apt-get install -y rsync dpkg-dev appstream desktop-file-utils
+
+      - name: Validate metadata (AppStream + desktop)
+        run: |
+          appstreamcli validate packaging/*.metainfo.xml flatpak/*.metainfo.xml
+          desktop-file-validate packaging/*.desktop
 
       - name: Build .deb
         run: ./packaging/build-deb.sh 0.0.0-ci

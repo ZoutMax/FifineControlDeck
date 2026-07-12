@@ -19,7 +19,7 @@ mkdir -p "$STAGE/$APPDIR"
 # copy the python package + assets, excluding caches and non-linux/x86 binaries
 rsync -a --exclude='__pycache__' --exclude='*.pyc' \
       "$HERE/fifine_deck" "$STAGE/$APPDIR/"
-rsync -a "$HERE/assets" "$STAGE/$APPDIR/"
+rsync -a --exclude='store' "$HERE/assets" "$STAGE/$APPDIR/"
 # slim: keep only the Linux transport lib for THIS architecture.
 # (The Python loader picks libtransport.so on x86_64 and libtransport_arm64.so
 #  on aarch64, so each .deb ships exactly the one its CPU needs.)
@@ -49,6 +49,11 @@ done
 # 512 + scalable fallback
 dir="$STAGE/usr/share/icons/hicolor/512x512/apps"; mkdir -p "$dir"
 install -m 0644 "$HERE/assets/app/fifine-deck.png" "$dir/$PKG.png"
+
+# --- AppStream metainfo (rich listing in GNOME Software / App Center) -----
+mkdir -p "$STAGE/usr/share/metainfo"
+install -m 0644 "$HERE/packaging/io.github.zoutmax.FifineControlDeck.metainfo.xml" \
+        "$STAGE/usr/share/metainfo/io.github.zoutmax.FifineControlDeck.metainfo.xml"
 
 # --- udev rule -----------------------------------------------------------
 # Use /lib/udev/rules.d: read by ALL udev versions (old non-merged-usr and
