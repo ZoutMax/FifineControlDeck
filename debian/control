@@ -1,0 +1,29 @@
+Source: fifine-control-deck
+Section: utils
+Priority: optional
+Maintainer: ZoutMax <150600436+ZoutMax@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Homepage: https://github.com/ZoutMax/fifine-control-deck-linux
+Rules-Requires-Root: no
+
+Package: fifine-control-deck
+Architecture: amd64 arm64
+Depends: ${misc:Depends},
+         python3 (>= 3.10),
+         python3-pyqt6,
+         python3-pil,
+         libc6,
+         libstdc++6,
+         libgcc-s1 | libgcc1,
+         libudev1
+Recommends: playerctl,
+            ydotool,
+            wireplumber | pulseaudio-utils,
+            xdg-utils
+Description: Control app for fifine / Stream Dock macro keypads
+ A native Linux control application for the fifine Control Deck
+ (Mirabox "Stream Dock" 293V3-family, USB 3142:0060). Draws icons and
+ labels on the LCD keys and binds them to actions: launch apps, hotkeys,
+ media and volume control, scripts, brightness, folders, page/profile
+ switching, and multi-step macros, with a PyQt6 configuration GUI.

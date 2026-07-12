@@ -1,0 +1,20 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: fifine-control-deck-linux
+Source: https://github.com/ZoutMax/fifine-control-deck-linux
+
+Files: *
+Copyright: 2026 ZoutMax
+License: MIT
+
+Files: fifine_deck/backend/StreamDock/*
+Copyright: MiraBox
+License: MIT
+ Bundled StreamDock Device SDK (github.com/MiraboxSpace/StreamDock-Device-SDK),
+ including the precompiled libtransport*.so USB transport library.
+
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, subject to including the above copyright
+ notice and this permission notice in all copies. THE SOFTWARE IS PROVIDED "AS
+ IS", WITHOUT WARRANTY OF ANY KIND.

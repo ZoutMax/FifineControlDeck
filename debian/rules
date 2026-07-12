@@ -1,0 +1,43 @@
+#!/usr/bin/make -f
+# Debian packaging for Launchpad PPA builds. The app is pure Python plus a
+# prebuilt per-arch transport .so; there is nothing to compile, so we override
+# the build/install steps to lay out the files (mirroring packaging/build-deb.sh).
+export DH_VERBOSE = 1
+
+PKGDIR = debian/fifine-control-deck
+APPDIR = $(PKGDIR)/usr/lib/fifine-control-deck
+
+%:
+	dh $@
+
+override_dh_auto_build:
+
+override_dh_auto_install:
+	# application package + assets
+	install -d $(APPDIR)
+	cp -r fifine_deck $(APPDIR)/
+	cp -r assets $(APPDIR)/
+	# keep only the transport lib for the build architecture
+	find $(APPDIR) -type f \( -name '*.dll' -o -name '*.dylib' \) -delete
+	if [ "$(DEB_HOST_ARCH)" = "arm64" ]; then \
+	    find $(APPDIR) -type f -name 'libtransport.so' -delete; \
+	else \
+	    find $(APPDIR) -type f -name 'libtransport_arm64.so' -delete; \
+	fi
+	# strip caches / dev leftovers
+	find $(APPDIR) -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
+	# launcher
+	install -Dm755 packaging/fifine-control-deck.launcher $(PKGDIR)/usr/bin/fifine-control-deck
+	# desktop entry
+	install -Dm644 packaging/fifine-control-deck.desktop \
+	    $(PKGDIR)/usr/share/applications/fifine-control-deck.desktop
+	# hicolor icons
+	set -e; for sz in 16 24 32 48 64 128 256; do \
+	    install -Dm644 assets/app/fifine-deck-$$sz.png \
+	        $(PKGDIR)/usr/share/icons/hicolor/$${sz}x$${sz}/apps/fifine-control-deck.png; \
+	done
+	install -Dm644 assets/app/fifine-deck.png \
+	    $(PKGDIR)/usr/share/icons/hicolor/512x512/apps/fifine-control-deck.png
+	# udev rule (read by every udev version)
+	install -Dm644 packaging/99-fifine-deck.rules \
+	    $(PKGDIR)/lib/udev/rules.d/99-fifine-deck.rules

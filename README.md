@@ -116,6 +116,11 @@ To build the `.deb` yourself: `./packaging/build-deb.sh` → `dist/`.
 [`docs/SNAP.md`](docs/SNAP.md) for building and publishing (and the device-access
 caveat under snap confinement).
 
+**Launchpad PPA (apt):** Debian source packaging lives in `debian/` — see
+[`docs/PPA.md`](docs/PPA.md) to build the source package and upload it so users
+can `sudo add-apt-repository ppa:zoutmax/fifine && sudo apt install
+fifine-control-deck`.
+
 ## Run from source (development)
 
 1. **Install the udev rule** (one time, needs root) so the device is usable

@@ -7,6 +7,16 @@ __pycache__/
 build/
 *.snap
 /parts/ /stage/ /prime/
+# debhelper / dpkg-buildpackage artifacts (PPA source builds)
+debian/.debhelper/
+debian/files
+debian/debhelper-build-stamp
+debian/fifine-control-deck/
+debian/fifine-control-deck.substvars
+debian/*.debhelper.log
+*.buildinfo
+*.changes
+*.ddeb
 # Ignore built packages except the stable-named "latest" ones we ship in-repo.
 dist/*
 !dist/fifine-control-deck_latest_amd64.deb

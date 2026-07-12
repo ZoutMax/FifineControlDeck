@@ -1,0 +1,6 @@
+fifine-control-deck (0.5.2) noble; urgency=medium
+
+  * PPA build of fifine Control Deck 0.5.2 (folders, multi-action editor,
+    production hardening).
+
+ -- ZoutMax <150600436+ZoutMax@users.noreply.github.com>  Sun, 12 Jul 2026 02:00:00 +0000

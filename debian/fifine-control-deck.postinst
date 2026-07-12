@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+if command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload-rules || true
+    udevadm trigger || true
+fi
+
+#DEBHELPER#
+
+if [ "$1" = "configure" ]; then
+    echo "fifine Control Deck installed. If key access fails, add yourself to the"
+    echo "'plugdev' group (sudo usermod -aG plugdev \"\$USER\"), then replug the device."
+fi
+
+exit 0
