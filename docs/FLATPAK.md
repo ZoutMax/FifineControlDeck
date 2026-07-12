@@ -52,10 +52,17 @@ tools that aren't in the sandbox:
 | Volume | `wpctl`/`pactl` | limited via the PulseAudio socket |
 
 The manifest already grants `--device=all`, `--socket=pulseaudio`, and
-`--talk-name=org.freedesktop.Flatpak` (for `flatpak-spawn --host`). To make the
-host-tool actions work cleanly, the action engine (`fifine_deck/actions.py`)
-should prefer portals / MPRIS when running inside a sandbox
-(detect `FLATPAK_ID`), falling back to `flatpak-spawn --host <tool>`.
+`--talk-name=org.freedesktop.Flatpak` (for `flatpak-spawn --host`).
+
+**Implemented:** `fifine_deck/actions.py` detects the sandbox (`/.flatpak-info`
+or `FLATPAK_ID`) and automatically routes host helper tools **and** launched
+apps/scripts through `flatpak-spawn --host` (it also probes tool availability on
+the host, not the sandbox). `open_url` uses the runtime's portal-aware
+`xdg-open`. Non-sandboxed builds are unaffected (the wrapper is a no-op).
+
+**Remaining:** verify this end-to-end in a real `flatpak-builder` build, and
+note the **host** must actually have `ydotool` / `playerctl` / `wpctl` installed
+for those actions to work (they run on the host, outside the sandbox).
 
 ## Submitting to Flathub
 1. Fork <https://github.com/flathub/flathub> (the `new-pr` branch flow).

@@ -9,6 +9,7 @@ controller, because they need device + config state.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import time
@@ -20,8 +21,30 @@ from typing import Protocol
 IS_WAYLAND = bool(os.environ.get("WAYLAND_DISPLAY")) or \
     os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
 
+# Flatpak sandbox: host helper tools (ydotool, playerctl, wpctl) and the user's
+# real apps live OUTSIDE the sandbox, so they must be reached via
+# `flatpak-spawn --host`. Detected once at import.
+IN_FLATPAK = os.path.exists("/.flatpak-info") or bool(os.environ.get("FLATPAK_ID"))
+_HOST_PREFIX = ["flatpak-spawn", "--host"]
+
+
+def _host(args):
+    """Prefix an argv list so it runs on the host when inside a Flatpak sandbox."""
+    return _HOST_PREFIX + list(args) if IN_FLATPAK else list(args)
+
 
 def _has(cmd: str) -> bool:
+    """Is `cmd` available? Inside Flatpak, probe the HOST — the sandbox PATH
+    would not see host-side tools."""
+    if IN_FLATPAK:
+        try:
+            r = subprocess.run(
+                _HOST_PREFIX + ["sh", "-c", "command -v " + shlex.quote(cmd)],
+                timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            return r.returncode == 0
+        except Exception:
+            return False
     return shutil.which(cmd) is not None
 
 
@@ -41,6 +64,7 @@ if IS_WAYLAND:
 else:
     _KEY_TOOLS = ["xdotool", "ydotool", "wtype"]
 KEY_TOOL = next((t for t in _KEY_TOOLS if _has(t)), "")
+HAS_PLAYERCTL = _has("playerctl")
 
 
 class ActionContext(Protocol):
@@ -138,7 +162,12 @@ def default_icon_for(action) -> tuple[str, str]:
     return ACTION_DEFAULT_ICON.get(t, ("", ""))
 
 
-def _popen_detached(args, shell=False):
+def _popen_detached(args, shell=False, host=False):
+    """Launch a detached process. With host=True inside a Flatpak sandbox, run it
+    on the host via flatpak-spawn so it can reach the user's real apps/scripts."""
+    if IN_FLATPAK and host:
+        args = _HOST_PREFIX + (["sh", "-c", args] if shell else list(args))
+        shell = False
     subprocess.Popen(
         args, shell=shell, start_new_session=True,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
@@ -151,7 +180,7 @@ def _run(args, **kw):
     kw.setdefault("timeout", 8)
     kw.setdefault("stderr", subprocess.DEVNULL)
     try:
-        subprocess.run(args, **kw)
+        subprocess.run(_host(args), **kw)
     except Exception as e:
         print(f"[action] command failed: {e}", flush=True)
 
@@ -251,7 +280,7 @@ def _close_app(target: str) -> None:
 
 
 def _media(cmd: str) -> None:
-    if _has("playerctl"):
+    if HAS_PLAYERCTL:
         _run(["playerctl", cmd], stderr=subprocess.DEVNULL)
     else:
         print("[action] media control needs 'playerctl'", flush=True)
@@ -294,11 +323,11 @@ def execute(action, context: ActionContext | None = None) -> None:
         elif t == "launch_app":
             cmd = p.get("command", "").strip()
             if cmd:
-                _popen_detached(cmd, shell=True)
+                _popen_detached(cmd, shell=True, host=True)
         elif t == "run_command":
             cmd = p.get("command", "").strip()
             if cmd:
-                _popen_detached(cmd, shell=True)
+                _popen_detached(cmd, shell=True, host=True)
         elif t == "open_url":
             url = p.get("url", "").strip()
             if url:
@@ -355,4 +384,5 @@ def execute(action, context: ActionContext | None = None) -> None:
 def environment_summary() -> str:
     return (f"session={'wayland' if IS_WAYLAND else 'x11'} "
             f"audio={AUDIO or 'none'} keytool={KEY_TOOL or 'none'} "
-            f"playerctl={'yes' if _has('playerctl') else 'no'}")
+            f"playerctl={'yes' if HAS_PLAYERCTL else 'no'}"
+            + (" [flatpak]" if IN_FLATPAK else ""))
