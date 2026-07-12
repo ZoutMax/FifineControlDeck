@@ -1,3 +1,10 @@
+fifine-control-deck (0.5.5) noble; urgency=medium
+
+  * Snap USB-access hint + python3-pyudev hotplug dependency for
+    .deb/PPA
+
+ -- ZoutMax <150600436+ZoutMax@users.noreply.github.com>  Sun, 12 Jul 2026 13:27:25 +0200
+
 fifine-control-deck (0.5.4ppa1) resolute; urgency=medium
 
   * Build for Ubuntu 25.10 (resolute).
