@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fifine Control Deck — Linux</title>
+<meta name="description" content="A native Linux control app for the fifine Control Deck / Mirabox Stream Dock macro keypad. Install via Snap or apt (PPA). amd64 + arm64.">
+<link rel="icon" href="img/icon.png">
+<style>
+  :root{
+    --bg1:#12122b; --bg2:#241a3a; --card:#1b1b33; --card2:#20203c;
+    --text:#e9e9f2; --muted:#a9adca; --line:#2e2e4d;
+    --pink:#e98aa6; --purple:#9b8ae5; --green:#6fbf8a; --blue:#5aa8e5; --gold:#f0c478;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; color:var(--text); font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif;
+    background:linear-gradient(160deg,var(--bg1),var(--bg2)); background-attachment:fixed; min-height:100vh;
+  }
+  a{color:var(--blue); text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:960px; margin:0 auto; padding:0 20px}
+
+  /* hero */
+  .hero{text-align:center; padding:72px 20px 40px}
+  .hero img.icon{width:132px; height:132px; border-radius:28px; box-shadow:0 12px 40px rgba(120,90,220,.35)}
+  .hero h1{font-size:clamp(2rem,5vw,3.1rem); margin:22px 0 6px; letter-spacing:-.5px}
+  .tagline{color:var(--muted); font-size:clamp(1rem,2.5vw,1.25rem); margin:0 auto 18px; max-width:600px}
+  .badges{display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin-bottom:26px}
+  .badges span{font-size:.8rem; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:3px 12px}
+  .cta{display:flex; gap:12px; justify-content:center; flex-wrap:wrap}
+  .btn{display:inline-block; padding:12px 20px; border-radius:12px; font-weight:600; color:#15151f;
+       transition:transform .08s ease, box-shadow .2s ease}
+  .btn:hover{transform:translateY(-2px); text-decoration:none; box-shadow:0 8px 24px rgba(0,0,0,.35)}
+  .btn.snap{background:var(--green)} .btn.ppa{background:var(--purple); color:#fff} .btn.deb{background:var(--gold)}
+
+  section{padding:34px 0; border-top:1px solid var(--line)}
+  h2{font-size:1.5rem; margin:0 0 18px}
+  h3{margin:0 0 8px; font-size:1rem; color:var(--muted); font-weight:600}
+
+  .cmds{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  pre{background:#0e0e1c; border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin:0;
+      overflow-x:auto; font:0.9rem/1.5 ui-monospace,"Cascadia Code",Consolas,monospace; color:#d7d7ea}
+  .note{color:var(--muted); font-size:.9rem; margin-top:12px}
+
+  .shots{display:grid; gap:18px}
+  .shots img{width:100%; height:auto; border-radius:12px; border:1px solid var(--line); box-shadow:0 8px 30px rgba(0,0,0,.35)}
+
+  .features ul{list-style:none; padding:0; margin:0; display:grid; grid-template-columns:1fr 1fr; gap:10px 24px}
+  .features li{padding-left:26px; position:relative; color:var(--text)}
+  .features li::before{content:"▸"; position:absolute; left:0; color:var(--purple)}
+
+  footer{border-top:1px solid var(--line); padding:30px 20px 60px; text-align:center; color:var(--muted); font-size:.92rem}
+  footer .flinks{display:flex; gap:18px; justify-content:center; flex-wrap:wrap; margin-bottom:12px}
+
+  @media (max-width:640px){ .cmds{grid-template-columns:1fr} .features ul{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <img class="icon" src="img/icon.png" alt="fifine Control Deck icon">
+      <h1>fifine Control Deck</h1>
+      <p class="tagline">Control your Mirabox / Hotspot “Stream Dock” macro keypad — natively on Linux.</p>
+      <div class="badges"><span>amd64 + arm64</span><span>Snap &amp; apt</span><span>MIT licensed</span><span>Alpha</span></div>
+      <div class="cta">
+        <a class="btn snap" href="https://snapcraft.io/fifine-control-deck">Install from Snap Store</a>
+        <a class="btn ppa" href="https://launchpad.net/~zoutmax/+archive/ubuntu/fifine">Add the PPA (apt)</a>
+        <a class="btn deb" href="https://github.com/ZoutMax/fifine-control-deck-linux/releases/latest">Download .deb</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="install">
+      <h2>Install</h2>
+      <div class="cmds">
+        <div>
+          <h3>Snap (Ubuntu App Center)</h3>
+          <pre>sudo snap install fifine-control-deck</pre>
+        </div>
+        <div>
+          <h3>apt (Launchpad PPA)</h3>
+          <pre>sudo add-apt-repository ppa:zoutmax/fifine
+sudo apt update
+sudo apt install fifine-control-deck</pre>
+        </div>
+      </div>
+      <p class="note">Works on Debian/Ubuntu-family distros for <strong>amd64</strong> and <strong>arm64</strong>
+      (Raspberry Pi included). You must be in the <code>plugdev</code> group; the packages install the
+      udev rule and helper tools automatically.</p>
+    </section>
+
+    <section class="shots">
+      <h2>Screenshots</h2>
+      <img src="img/screenshot-01.png" alt="Overview: actions catalog, the live key grid, and the key-settings panel">
+      <img src="img/screenshot-02.png" alt="Editing a key: icon, colours, label and the assigned action">
+    </section>
+
+    <section class="features">
+      <h2>Features</h2>
+      <ul>
+        <li>Live per-key icons, labels &amp; colours (and animated GIF keys)</li>
+        <li>Drag-and-drop actions catalog</li>
+        <li>Launch apps, hotkeys, type text, run scripts</li>
+        <li>Media, volume &amp; brightness control</li>
+        <li>Multiple profiles &amp; pages</li>
+        <li>Folders (nested key-sets) &amp; multi-step macros</li>
+        <li>Knob/dial support (press / rotate)</li>
+        <li>Hotplug-aware; optional autostart on login</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <div class="flinks">
+      <a href="https://github.com/ZoutMax/fifine-control-deck-linux">GitHub</a>
+      <a href="https://snapcraft.io/fifine-control-deck">Snap Store</a>
+      <a href="https://launchpad.net/fifine-control-deck">Launchpad project</a>
+      <a href="https://launchpad.net/~zoutmax/+archive/ubuntu/fifine">PPA</a>
+      <a href="https://github.com/ZoutMax/fifine-control-deck-linux/issues">Report an issue</a>
+    </div>
+    <p>MIT licensed · A from-scratch Linux reimplementation of the Windows fifine Control Deck.<br>
+    Reuses only the vendor’s MIT-licensed StreamDock USB backend.</p>
+  </footer>
+</body>
+</html>
