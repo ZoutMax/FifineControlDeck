@@ -38,19 +38,22 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install PyQt6 Pillow pyudev flake8
+          pip install PyQt6 Pillow pyudev ruff pytest
 
-      - name: Lint with flake8
+      - name: Lint with ruff
         run: |
           # Fail on real errors (syntax, undefined names); skip the vendored SDK.
-          flake8 fifine_deck --exclude=fifine_deck/backend \
-            --count --select=E9,F63,F7,F82 --show-source --statistics
-          # Style pass is advisory only.
-          flake8 fifine_deck --exclude=fifine_deck/backend \
-            --count --exit-zero --max-line-length=100 --statistics
+          ruff check fifine_deck --exclude fifine_deck/backend --select E9,F63,F7,F82
+          # Full style pass is advisory only.
+          ruff check fifine_deck --exclude fifine_deck/backend --exit-zero
 
       - name: Regenerate icons
         run: python tools/make_icons.py
+
+      - name: Run unit tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: HOME="$(mktemp -d)" python -m pytest
 
       - name: Smoke test (offscreen)
         env:

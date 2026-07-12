@@ -19,7 +19,7 @@ import os
 import queue
 
 from . import actions, rendering
-from .device import FifineDeck, register, DEVICE_PROFILE
+from .device import FifineDeck, register
 from .model import DeckConfig, Profile, Page, KeyConfig
 
 from StreamDock.DeviceManager import DeviceManager

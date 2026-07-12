@@ -4,6 +4,8 @@ __pycache__/
 *.swp
 *.tmp
 .venv/
+.pytest_cache/
+.ruff_cache/
 build/
 *.snap
 /parts/ /stage/ /prime/

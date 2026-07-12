@@ -6,7 +6,7 @@ from PyQt6.QtGui import QPixmap, QColor, QIcon, QDrag
 from PyQt6.QtWidgets import (
     QToolButton, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
     QLineEdit, QPlainTextEdit, QComboBox, QPushButton, QColorDialog, QFileDialog,
-    QSpinBox, QDoubleSpinBox, QDialog, QScrollArea, QGridLayout, QListWidget,
+    QDoubleSpinBox, QDialog, QScrollArea, QGridLayout, QListWidget,
     QListWidgetItem, QAbstractItemView, QFrame, QApplication,
 )
 

@@ -1,7 +1,6 @@
 """Main window: key grid + editor + profile/page controls + tray."""
 from __future__ import annotations
 
-import functools
 import json
 import os
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import Optional
 
 CONFIG_DIR = os.path.expanduser("~/.config/fifine-control-deck")
