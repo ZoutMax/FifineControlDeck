@@ -11,6 +11,20 @@ with profiles, multiple pages, a configuration GUI, and a system tray.
 > reuses only the vendor's **MIT-licensed** `StreamDock` device backend (the
 > `libtransport.so` USB layer) and builds an original Python/PyQt6 app on top.
 
+## Links
+
+- **Snap Store** (Ubuntu App Center): <https://snapcraft.io/fifine-control-deck>
+  — `sudo snap install fifine-control-deck`
+- **Launchpad PPA** (apt): <https://launchpad.net/~zoutmax/+archive/ubuntu/fifine>
+  — `sudo add-apt-repository ppa:zoutmax/fifine && sudo apt install fifine-control-deck`
+- **Source (GitHub):** <https://github.com/ZoutMax/fifine-control-deck-linux>
+  ([Releases](https://github.com/ZoutMax/fifine-control-deck-linux/releases) ·
+  [Issues](https://github.com/ZoutMax/fifine-control-deck-linux/issues))
+- **Launchpad project:** <https://launchpad.net/fifine-control-deck>
+  ([code mirror](https://code.launchpad.net/~zoutmax/fifine-control-deck/+git/fifine-control-deck-linux))
+
+Available for **amd64** and **arm64** on both channels.
+
 ## Status: Alpha
 
 The core is feature-complete and hardened, but it's early. Realistic expectations:
