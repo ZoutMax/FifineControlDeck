@@ -1,0 +1,4 @@
+#!/bin/sh
+# Flatpak launcher: run the app package bundled under /app/lib.
+export PYTHONPATH="/app/lib/fifine-control-deck:${PYTHONPATH}"
+exec python3 -m fifine_deck "$@"

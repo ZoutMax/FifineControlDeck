@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=fifine Control Deck
+GenericName=Stream Dock controller
+Comment=Control app for fifine / Stream Dock macro keypads
+Exec=fifine-control-deck
+Icon=io.github.zoutmax.FifineControlDeck
+Terminal=false
+Categories=Utility;AudioVideo;
+Keywords=streamdock;macro;keypad;fifine;deck;hotspot;mirabox;
+StartupWMClass=fifine-control-deck
