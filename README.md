@@ -23,6 +23,12 @@ The core is feature-complete and hardened, but it's early. Realistic expectation
 - ⚠️ Limited field testing across distros/desktops. Feedback and device reports
   (via GitHub issues) are very welcome.
 
+## Screenshots
+
+![Overview — the actions catalog, the live 3×5 key grid, and the key-settings panel](assets/store/screenshot-01-overview.png)
+
+![Editing a key — icon, colours, label and the assigned action](assets/store/screenshot-02-editor.png)
+
 ## Features
 
 - Live per-key icons + text labels, colour backgrounds, custom images, and
