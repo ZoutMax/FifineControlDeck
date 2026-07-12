@@ -1,3 +1,9 @@
+fifine-control-deck (0.5.4ppa1) resolute; urgency=medium
+
+  * Build for Ubuntu 25.10 (resolute).
+
+ -- ZoutMax <danielhoutmann@hotmail.com>  Sun, 12 Jul 2026 12:23:15 +0200
+
 fifine-control-deck (0.5.4) noble; urgency=medium
 
   * Pro-quality pass: controller test suite + mock device, logging
