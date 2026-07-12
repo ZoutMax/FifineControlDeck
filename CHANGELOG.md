@@ -4,6 +4,14 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.5.6] - 2026-07-12
+### Fixed
+- Eliminated a harmless Qt 6 / Wayland startup warning (*"Failed to register
+  with host portal … Connection already associated with an application ID"*) by
+  setting the application identity (name and desktop file name) via the static
+  `QGuiApplication` setters **before** constructing `QApplication`, so the
+  Wayland / xdg-desktop-portal integration has the correct app-id at init time.
+
 ## [0.5.5] - 2026-07-12
 ### Fixed
 - `.deb`/PPA packages now recommend **`python3-pyudev`**, restoring

@@ -1,3 +1,13 @@
+fifine-control-deck (0.5.6) noble; urgency=medium
+
+  * Fix a Qt 6 / Wayland startup warning ("Failed to register with host portal
+    ... Connection already associated with an application ID") by setting the
+    application identity (application name and desktop file name) via the static
+    QGuiApplication setters before constructing QApplication, so the Wayland /
+    xdg-desktop-portal integration has the correct app-id at init time.
+
+ -- ZoutMax <danielhoutmann@hotmail.com>  Sun, 12 Jul 2026 22:52:00 +0200
+
 fifine-control-deck (0.5.5ppa1) resolute; urgency=medium
 
   * Build for Ubuntu 25.10/26.04 (resolute).

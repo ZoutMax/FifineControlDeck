@@ -69,7 +69,7 @@ def set_autostart(enable: bool) -> int:
 
 def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
     from PyQt6.QtWidgets import QApplication
-    from PyQt6.QtGui import QIcon
+    from PyQt6.QtGui import QIcon, QGuiApplication
     from PyQt6.QtNetwork import QLocalServer
     from .gui.main_window import MainWindow
     from .gui.style import STYLESHEET
@@ -88,10 +88,15 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
     config = DeckConfig.load()
     controller = DeckController(config)
 
+    # Set identity BEFORE constructing QApplication so the Wayland /
+    # xdg-desktop-portal integration knows the app-id at init time. Setting it
+    # afterwards makes Qt 6 emit a benign "Failed to register with host portal
+    # ... Connection already associated with an application ID" warning.
+    QGuiApplication.setApplicationName("fifine Control Deck")
+    QGuiApplication.setApplicationDisplayName("fifine Control Deck")
+    QGuiApplication.setDesktopFileName("fifine-control-deck")
+
     app = QApplication(sys.argv)
-    app.setApplicationName("fifine Control Deck")
-    app.setApplicationDisplayName("fifine Control Deck")
-    app.setDesktopFileName("fifine-control-deck")
     if assets.app_icon_path():
         app.setWindowIcon(QIcon(assets.app_icon_path()))
     app.setStyleSheet(STYLESHEET)
