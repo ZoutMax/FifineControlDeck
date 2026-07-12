@@ -11,17 +11,20 @@ Already generated at `~/.ssh/id_ed25519`. Import the **public** key at
 <https://launchpad.net/~/+editsshkeys> (paste `~/.ssh/id_ed25519.pub`).
 
 ### 2. GPG key (required — PPA uploads must be signed)
-Launchpad only accepts source uploads signed by a GPG key registered to your
-account, tied to an email **you can receive mail at** (for the confirmation).
+A signing key has already been generated and published to the Ubuntu keyserver:
+
+- **Name/email:** `Daniel Houtmann <danielhoutmann@hotmail.com>`
+- **Fingerprint:** `D42A012CF26518F44F1E4F7BB1174D503445F8FE`
+- Secret key lives in `~/.gnupg` on this machine (no passphrase — add one with
+  `gpg --change-passphrase D42A012CF26518F44F1E4F7BB1174D503445F8FE` if you like).
+
+Register it: paste the fingerprint at <https://launchpad.net/~/+editpgpkeys>.
+Launchpad emails an **encrypted** confirmation — decrypt + click to confirm:
 
 ```bash
-gpg --full-generate-key          # RSA 4096 or ed25519; use YOUR real email
-gpg --list-secret-keys --keyid-format=long   # note the key id / fingerprint
-# publish the key so Launchpad can fetch it:
-gpg --send-keys --keyserver keyserver.ubuntu.com <KEYID>
+# decrypt the confirmation email body you receive:
+gpg --decrypt < the-email-body.txt
 ```
-Add the fingerprint at <https://launchpad.net/~/+editpgpkeys>; Launchpad emails
-you an **encrypted** confirmation — decrypt it and click the link to confirm.
 
 ### 3. Create the PPA
 On <https://launchpad.net/~ZoutMax> → *Create a new PPA* (e.g. name `fifine`).
@@ -32,21 +35,33 @@ It becomes `ppa:zoutmax/fifine`.
 
 ## Build + upload the source package
 
-Set your identity to match your GPG key (the signed upload must verify):
+The committed `debian/changelog` is already at `0.5.2` targeting `noble`, so the
+first upload is just a signed source build + `dput`. Sign with the key
+explicitly (`-k`), which avoids the maintainer-email/key mismatch:
 
 ```bash
-export DEBFULLNAME="Your Name"
-export DEBEMAIL="you@example.com"     # the email on your GPG + Launchpad account
-
 cd fifine-control-deck-linux
-# refresh the changelog entry for the target series (e.g. noble/jammy):
-dch -v 0.5.2~ppa1 --distribution noble "PPA build"
+KEY=D42A012CF26518F44F1E4F7BB1174D503445F8FE
 
-# build a SIGNED source package (.dsc + .changes) — signs with your GPG key:
-debuild -S -sa
+# build a SIGNED source package (.dsc + _source.changes):
+debuild -S -k$KEY
 
-# upload:
-dput ppa:zoutmax/fifine ../fifine-control-deck_0.5.2~ppa1_source.changes
+# upload to your PPA:
+dput ppa:zoutmax/fifine ../fifine-control-deck_0.5.2_source.changes
+```
+
+This was verified locally end-to-end (build + sign succeed); only the `dput`
+step needs your Launchpad account + a confirmed GPG key.
+
+### Re-uploads / other series
+Launchpad rejects a re-used version. For a new upload bump the version *upward*
+(no leading `~`, which sorts lower), and target each series you want:
+
+```bash
+export DEBEMAIL="danielhoutmann@hotmail.com" DEBFULLNAME="Daniel Houtmann"
+dch -v 0.5.2ppa2 --distribution jammy "PPA build for jammy"
+debuild -S -k$KEY
+dput ppa:zoutmax/fifine ../fifine-control-deck_0.5.2ppa2_source.changes
 ```
 
 Launchpad then builds the binaries for `amd64` and `arm64` (per `debian/control`)
