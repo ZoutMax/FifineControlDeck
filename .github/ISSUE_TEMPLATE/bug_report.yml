@@ -1,0 +1,39 @@
+name: Bug report
+description: Report a problem with fifine Control Deck
+labels: [bug]
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Device model
+      placeholder: "e.g. Stream Dock 293V3 (USB 3142:0060)"
+  - type: input
+    id: distro
+    attributes:
+      label: Distro / desktop / session type
+      placeholder: "e.g. Ubuntu 26.04, GNOME, Wayland"
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options:
+        - Snap
+        - PPA (apt)
+        - .deb
+        - From source
+        - Flatpak
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "Run with `FIFINE_LOG=DEBUG` and paste any relevant output."
+      render: shell
