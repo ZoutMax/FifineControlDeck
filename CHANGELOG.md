@@ -4,6 +4,28 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.5.7] - 2026-07-13
+### Added
+- **Snap: classic-confinement build that actually drives the deck.** The deck is
+  controlled over `/dev/hidraw`, which strict confinement cannot grant (its
+  transport uses hidapi's hidraw backend); the classic build opens the device
+  like the `.deb` does.
+- **Snap: one-click "Enable device access" button.** A snap can't install the
+  udev rule the deck needs, so the classic snap bundles the rule and, when the
+  device isn't reachable, offers a button that installs it via `pkexec`
+  (graphical auth) and reconnects live — no terminal, no relaunch.
+### Fixed
+- Snap: bundle the Python interpreter + stdlib and pin `PYTHONHOME` so the
+  classic snap boots reliably (core24's base provides `python3.12`, so snapcraft
+  otherwise prunes it from the payload — fatal for a classic snap at runtime).
+- Snap: show the device-access hint even when the deck enumerates over libusb
+  with empty firmware (previously the false "connected" suppressed it).
+### Changed
+- Packaging: `debian/source/options` keeps build artifacts (`dist/`, `*.snap`,
+  caches) out of the native source tarball, slimming PPA source uploads.
+- Docs: `SNAP.md` documents the working classic build; the README leads with the
+  PPA and notes the strict store snap can't drive the deck.
+
 ## [0.5.6] - 2026-07-12
 ### Fixed
 - Eliminated a harmless Qt 6 / Wayland startup warning (*"Failed to register
