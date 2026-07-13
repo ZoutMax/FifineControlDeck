@@ -26,6 +26,12 @@ override_dh_auto_install:
 	else \
 	    find $(APPDIR) -type f -name 'libtransport_arm64.so' -delete; \
 	fi
+	# Safety net: the arch transport .so MUST survive, or the app installs but
+	# cannot open the device. dpkg-source's default *.so exclusion silently
+	# stripped it from PPA source tarballs before 0.5.7 (now kept via
+	# debian/source/options) — fail loudly rather than ship a broken package.
+	test -n "$$(find $(APPDIR) -name 'libtransport*.so' -print -quit)" \
+	    || { echo "FATAL: libtransport .so missing from payload — refusing to build a broken deb" >&2; exit 1; }
 	# strip caches / dev leftovers
 	find $(APPDIR) -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
 	# launcher
