@@ -79,9 +79,22 @@ class DeckController:
         Safe to call at runtime — e.g. right after installing the udev rule,
         where `udevadm trigger` fires a 'change' (not 'add') event that the
         hotplug listener ignores. Does not spawn another listener thread.
+
+        If we already hold a *functional* handle (firmware read) we keep it. A
+        non-functional handle — the libusb false-connect with empty firmware
+        that a locked-out snap gets before the rule is installed — is dropped
+        and the device re-opened fresh, so keys work immediately without a
+        relaunch.
         """
-        if self.device is not None:
+        if self.device is not None and getattr(self.device, "firmware_version", ""):
             return True
+        if self.device is not None:
+            try:
+                self.device.close()
+            except Exception:
+                pass
+            with self._lock:
+                self.device = None
         if self.manager is None:
             self.manager = DeviceManager()
         for dev in self.manager.enumerate():
