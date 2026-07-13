@@ -656,9 +656,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"{state}{fw}   |   {environment_summary()}")
 
     def maybe_show_snap_hint(self):
-        """Under a confined snap, if no device was found on startup, tell the
-        user how to grant USB access (the raw-usb interface is manual-connect,
-        so a fresh install can't see the device until it's connected)."""
+        """Under a snap, if the deck isn't actually usable, guide the user to fix
+        device access. For the classic snap this offers a one-click button that
+        installs the udev rule via pkexec and reconnects; otherwise it shows text
+        guidance. "Not usable" includes a connected-but-empty-firmware handle (the
+        libusb false-connect a locked-out snap gets before the rule is present)."""
         from ..actions import (snap_usb_hint, can_install_udev_rule,
                                 install_udev_rule_pkexec)
         hint = snap_usb_hint()
