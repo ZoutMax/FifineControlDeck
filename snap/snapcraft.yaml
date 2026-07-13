@@ -18,13 +18,12 @@ description: |
 
   Website: https://zoutmax.github.io/fifine-control-deck-linux/
 
-  NOTE: the deck is accessed over USB (/dev/hidraw). Under strict confinement
-  the app needs the raw-usb / hardware-observe interfaces connected; on a
-  classic desktop the reliable path for full device access is the classic
-  build (see docs/SNAP.md).
+  This is the CLASSIC build: the deck is driven over /dev/hidraw, which strict
+  confinement cannot grant, so full device control needs classic. Access still
+  requires the udev rule 99-fifine-deck.rules on the host (plugdev on VID 3142).
 
 grade: stable
-confinement: strict
+confinement: classic
 
 platforms:
   amd64:
@@ -33,18 +32,8 @@ platforms:
 apps:
   fifine-control-deck:
     command: bin/fifine-control-deck-launch
-    extensions: [gnome]
-    plugs:
-      - home
-      - network
-      - raw-usb            # USB device access (usbfs)
-      - hardware-observe   # enumerate/inspect the device
-      - password-manager-service   # keyring for the 'type password' action
-      - audio-playback     # volume/media actions
-      - removable-media
 
 parts:
-  # Application code + assets + the vendored MIT device backend (libtransport.so)
   fifine-deck:
     plugin: python
     source: .
@@ -55,18 +44,53 @@ parts:
       - keyring
     stage-packages:
       - libudev1
-      - libxcb-cursor0     # required by Qt6's xcb platform plugin
+      # Qt6 xcb platform plugin runtime deps (classic = no gnome platform snap)
+      - libxcb-cursor0
+      - libxcb-xinerama0
+      - libxcb-icccm4
+      - libxcb-image0
+      - libxcb-keysyms1
+      - libxcb-randr0
+      - libxcb-render-util0
+      - libxcb-shape0
+      - libxcb-util1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libgl1
+      - libegl1
+      - libglx-mesa0
+      - libopengl0
+      - libfontconfig1
+      - libfreetype6
+      - libdbus-1-3
+      - libnss3
     override-build: |
+      set -eux
+      # core24's base ships python3.12, so snapcraft PRUNES it from the payload.
+      # A classic snap has no base at runtime, so bundle the interpreter + stdlib
+      # ourselves BEFORE the plugin runs (files go to usr/, venv uses bin/, so no
+      # collision); the plugin's fixup then finds usr/bin/python3.12.
+      inst="$CRAFT_PART_INSTALL"
+      triplet="${CRAFT_ARCH_TRIPLET_BUILD_FOR:-${CRAFT_ARCH_TRIPLET:-x86_64-linux-gnu}}"
+      mkdir -p "$inst/usr/bin" "$inst/usr/lib/$triplet"
+      cp -a /usr/bin/python3.12 "$inst/usr/bin/"
+      cp -a /usr/lib/python3.12 "$inst/usr/lib/"
+      cp -aL /usr/lib/"$triplet"/libpython3.12.so* "$inst/usr/lib/$triplet/" 2>/dev/null || true
+
       craftctl default
-      dest="$CRAFT_PART_INSTALL/lib/fifine-control-deck"
+
+      dest="$inst/lib/fifine-control-deck"
       mkdir -p "$dest"
       cp -r "$CRAFT_PART_SRC/fifine_deck" "$dest/"
       cp -r "$CRAFT_PART_SRC/assets" "$dest/"
       rm -rf "$dest/assets/store"   # listing screenshots/banner — not runtime assets
-      # drop non-Linux / other-arch transport binaries to slim the snap
+      # drop non-Linux and other-arch transport binaries to slim the snap
       find "$dest" -type f \( -name '*.dll' -o -name '*.dylib' \) -delete || true
+      case "$triplet" in
+        x86_64-*)  find "$dest" -name 'libtransport_arm64.so' -delete || true ;;
+        aarch64-*) find "$dest" -name 'libtransport.so'       -delete || true ;;
+      esac
 
-  # Launch wrapper (sets PYTHONPATH to the bundled app package)
   launcher:
     plugin: dump
     source: snap/local

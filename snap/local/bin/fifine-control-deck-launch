@@ -1,6 +1,33 @@
 #!/bin/bash
-# Snap launch wrapper: make the bundled app package importable and run it.
-export PYTHONPATH="$SNAP/lib/fifine-control-deck${PYTHONPATH:+:$PYTHONPATH}"
-# No system-tray host assumption inside the snap sandbox.
+# Classic-snap launch wrapper for PyQt6.
+#
+# Under classic confinement there is no gnome extension to set up the desktop
+# runtime, so we point Qt at the bundled Qt6 (shipped inside the PyQt6 wheel)
+# and add the staged libraries to the loader path ourselves. Arch-agnostic.
+set -e
+
+# Bundled Python site-packages (core24 -> python3.12; glob to be version-proof).
+SITE="$(ls -d "$SNAP"/lib/python3*/site-packages 2>/dev/null | head -n1)"
+QT6="$SITE/PyQt6/Qt6"
+LIBGNU="$(ls -d "$SNAP"/usr/lib/*-linux-gnu 2>/dev/null | head -n1)"
+
+export PYTHONPATH="$SNAP/lib/fifine-control-deck${SITE:+:$SITE}${PYTHONPATH:+:$PYTHONPATH}"
+
+if [ -d "$QT6" ]; then
+  export QT_PLUGIN_PATH="$QT6/plugins"
+  export QT_QPA_PLATFORM_PLUGIN_PATH="$QT6/plugins/platforms"
+  QTLIB="$QT6/lib"
+fi
+
+export LD_LIBRARY_PATH="${QTLIB:+$QTLIB:}${LIBGNU:+$LIBGNU:}$SNAP/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+# Use host fonts; classic snaps run with the real HOME for the fontconfig cache.
+export FONTCONFIG_FILE="${FONTCONFIG_FILE:-/etc/fonts/fonts.conf}"
+
+# No system-tray host assumption inside the snap.
 export FIFINE_TRAY="${FIFINE_TRAY:-0}"
-exec python3 -m fifine_deck "$@"
+
+# Prefer the snap's bundled interpreter if the python plugin provided one.
+PY="$SNAP/bin/python3"
+[ -x "$PY" ] || PY="python3"
+exec "$PY" -m fifine_deck "$@"

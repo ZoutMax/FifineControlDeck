@@ -14,7 +14,7 @@ sudo snap install lxd && sudo lxd init --auto
 sudo usermod -aG lxd "$USER"   # then re-login
 
 cd fifine-control-deck-linux
-snapcraft            # builds ./fifine-control-deck_0.5.2_amd64.snap
+snapcraft            # builds ./fifine-control-deck_<version>_amd64.snap
 ```
 
 Test locally before uploading:
@@ -38,12 +38,27 @@ snapcraft upload --release=edge ./fifine-control-deck_*.snap
 
 Once on `stable`, it appears in the Ubuntu **App Center** / Snap Store.
 
-## Build result (verified)
+## Build result (verified 2026-07-13, v0.5.6 from `stable`)
 
-The strict snap **builds and runs**, and on a machine that already has the
-udev rule installed it **successfully opened the device** (firmware read OK)
-with `raw-usb` + `hardware-observe` connected. So strict confinement is viable
-here — see the permission caveat below for clean installs.
+The strict snap **builds, installs, and launches**, and with `raw-usb` +
+`hardware-observe` connected it **enumerates** the deck (`keys=15`) — but it
+**cannot drive it**. The firmware read comes back empty
+(`connected: fw='' keys=15`) and key presses do nothing. A working deck logs a
+populated firmware string (`fw='V3.D6.1.009'`); an empty **`fw=''` is the
+tell-tale that the snap is running and is blocked from device I/O.**
+
+**Root cause (confirmed):** the bundled `libtransport.so` uses hidapi's
+**HIDRAW** backend — verified with `strings` (`"… not a HIDRAW device?"`,
+`hidraw`) and `ldd` (links `libudev`, **not** `libusb`). It opens `/dev/hidraw*`
+directly. Strict confinement's `raw-usb` grants only `/dev/bus/usb/**`
+(usbfs/libusb), and there is **no** general interface to give a desktop snap
+arbitrary `/dev/hidraw*` access. So **strict confinement does not work for this
+device — full stop.**
+
+> An earlier version of this note claimed strict was "viable / firmware read OK".
+> That was a misdiagnosis: the test machine had the **`.deb`** installed, whose
+> `/usr/bin/fifine-control-deck` shadows the snap in `PATH` — so the deb, not the
+> snap, was what opened the device. Run `hash -r` after (un)installing either.
 
 ## ⚠️ Device access — the one real constraint
 
@@ -53,7 +68,8 @@ uses hidraw via libudev). Under a **strict** snap:
 - `raw-usb` grants USB access via **usbfs (`/dev/bus/usb`)**, which libusb-based
   code uses — but our transport uses **hidraw**, and there is no general
   auto-connecting `hidraw` interface for arbitrary devices on a classic Ubuntu
-  desktop. So a strict snap may **fail to open the device**.
+  desktop. So a strict snap **enumerates the device but cannot do I/O** (the
+  `/dev/hidraw*` open for read/write is blocked) — confirmed above.
 - **Realistic fix:** ship a **classic**-confinement snap (`confinement: classic`)
   for full `/dev/hidraw` access. Classic snaps require **manual review** by the
   Snap Store team before they can be released (open a request on the
@@ -67,8 +83,32 @@ Also note under strict confinement:
 
 ## Recommendation
 
-1. Build the **strict** snap here and test device access on your machine.
-2. If hidraw access is blocked (likely), switch `confinement: classic` in
-   `snap/snapcraft.yaml`, rebuild, and request classic approval when uploading.
-3. A **Launchpad PPA** (apt) remains the simplest full-featured Ubuntu channel
-   if the store review is a blocker.
+`snap/snapcraft.yaml` is now the **classic** build — verified 2026-07-13 to
+fully drive the deck (firmware read + key events), which the strict snap could
+not. Strict is a dead end for this hidraw device; classic is what we ship.
+
+1. **Classic Snap** (`confinement: classic`, no gnome extension) — drives the
+   deck for real. Two caveats remain: classic snaps need **manual Snap Store
+   review** before release (open a request on the snapcraft forum), and a snap
+   **cannot install a udev rule**, so the host still needs `99-fifine-deck.rules`
+   (plugdev on VID `3142`) for `/dev/hidraw*` access.
+2. **`.deb` / Launchpad PPA (apt)** — the zero-friction channel: bundles the
+   udev rule and drives the deck out of the box (`ppa:zoutmax/fifine`).
+
+### How the classic build works (the non-obvious parts)
+
+- **Bundle the interpreter yourself.** core24's base ships `python3.12`, so
+  snapcraft prunes it from the payload — fine for strict (uses the base's Python
+  at runtime), fatal for classic (no base at runtime). `override-build` copies
+  `python3.12` + stdlib + `libpython3.12` into the payload **before**
+  `craftctl default` (into `usr/`, so the plugin's venv in `bin/` doesn't
+  collide, and its relocation fixup then finds the interpreter).
+- **No gnome extension** (it is strict-only). The launch wrapper points Qt at
+  the bundled Qt6 from the PyQt6 wheel (`QT_QPA_PLATFORM_PLUGIN_PATH`,
+  `LD_LIBRARY_PATH`) and the part stage-packages the xcb/GL/font libraries the
+  Qt platform plugin needs.
+- **Arch-aware** override-build (`CRAFT_ARCH_TRIPLET_BUILD_FOR`) and wrapper, so
+  amd64 + arm64 both build; the other-arch `libtransport` blob is stripped.
+
+Result: ~168 MB snap (bundles Python + Qt6 + libs), installs with
+`snap install --classic`, and opens `/dev/hidraw0` like the deb.
