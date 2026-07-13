@@ -36,6 +36,23 @@ _HOST_PREFIX = ["flatpak-spawn", "--host"]
 IN_SNAP = bool(os.environ.get("SNAP") and os.environ.get("SNAP_NAME"))
 
 
+def _snap_is_classic() -> bool:
+    """True if this snap was built with classic confinement (reads meta/snap.yaml)."""
+    snap = os.environ.get("SNAP")
+    if not snap:
+        return False
+    try:
+        with open(os.path.join(snap, "meta", "snap.yaml"), encoding="utf-8") as f:
+            return any(line.strip() == "confinement: classic" for line in f)
+    except OSError:
+        return False
+
+
+# A classic snap CAN open /dev/hidraw directly, but only if the host has the
+# udev rule (a snap cannot install one) — so its guidance differs from strict.
+IN_SNAP_CLASSIC = IN_SNAP and _snap_is_classic()
+
+
 def _host(args):
     """Prefix an argv list so it runs on the host when inside a Flatpak sandbox."""
     return _HOST_PREFIX + list(args) if IN_FLATPAK else list(args)
@@ -401,22 +418,75 @@ def environment_summary() -> str:
 
 
 def snap_usb_hint() -> Optional[str]:
-    """Guidance for granting a confined snap access to the USB device.
+    """Guidance for granting a snap access to the USB device.
 
-    Returns None unless running as a snap. The device backend talks to the
-    keypad over libusb, which the `raw-usb` interface provides; `raw-usb` and
-    `hardware-observe` are manual-connect, so a fresh install cannot see the
-    device until the user connects them.
+    Returns None unless running as a snap. The deck is driven over /dev/hidraw:
+    - classic snap  -> can open it directly, but needs the host udev rule (a snap
+      cannot install one); the rule is bundled at $SNAP/udev/99-fifine-deck.rules.
+    - strict snap   -> hidraw cannot be granted at all; this build should not be
+      used for device control (kept for completeness).
     """
     if not IN_SNAP:
         return None
     name = os.environ.get("SNAP_NAME", "fifine-control-deck")
+    if IN_SNAP_CLASSIC:
+        rule = os.path.join(os.environ.get("SNAP", ""), "udev", "99-fifine-deck.rules")
+        return (
+            "The deck is controlled over /dev/hidraw, which needs a udev rule so "
+            "this snap can open it (a snap can't install the rule itself).\n\n"
+            "If your deck is plugged in but not detected, run this once, then "
+            "unplug/replug the device:\n\n"
+            f"    sudo cp {rule} /etc/udev/rules.d/\n"
+            "    sudo udevadm control --reload-rules && sudo udevadm trigger\n\n"
+            "Tip: the .deb / PPA build installs this rule for you."
+        )
     return (
-        "This app is running as a snap, which sandboxes USB access.\n\n"
-        "If your device is plugged in but not detected, grant access from a "
-        "terminal and then restart the app:\n\n"
-        f"    sudo snap connect {name}:raw-usb\n"
-        f"    sudo snap connect {name}:hardware-observe\n\n"
-        "The “type password” action also needs the keyring interface:\n\n"
-        f"    sudo snap connect {name}:password-manager-service"
+        "This is the strict-confinement snap, which cannot access /dev/hidraw and "
+        "so cannot control the deck. Install the classic snap, or the .deb / PPA:\n\n"
+        "    sudo add-apt-repository ppa:zoutmax/fifine\n"
+        "    sudo apt install fifine-control-deck\n\n"
+        f"(For reference, USB interfaces on this build: "
+        f"`sudo snap connect {name}:raw-usb`, `:hardware-observe`.)"
     )
+
+
+def can_install_udev_rule() -> bool:
+    """True if the one-click 'enable device access' path is available.
+
+    Only the classic snap ships the bundled rule + helper and runs unconfined
+    enough to call pkexec.
+    """
+    if not IN_SNAP_CLASSIC:
+        return False
+    helper = os.path.join(os.environ.get("SNAP", ""), "bin", "fifine-install-udev-rule")
+    return os.path.exists(helper)
+
+
+def install_udev_rule_pkexec() -> tuple[bool, str]:
+    """Install the bundled udev rule as root via pkexec (graphical auth prompt).
+
+    A snap can't install a udev rule itself, so the classic snap ships the rule
+    and a small helper and elevates via polkit. Returns (ok, message); a
+    non-zero exit means the user cancelled the auth dialog or it failed.
+    """
+    if not can_install_udev_rule():
+        return (False, "The one-click installer is only available in the classic snap.")
+    helper = os.path.join(os.environ["SNAP"], "bin", "fifine-install-udev-rule")
+    # Call pkexec by absolute path — the snap's PATH may not include it, and the
+    # real setuid binary lives at /usr/bin/pkexec (a symlink is fine too).
+    pkexec = "/usr/bin/pkexec" if os.path.exists("/usr/bin/pkexec") else (
+        shutil.which("pkexec") or "pkexec")
+    try:
+        r = subprocess.run(
+            [pkexec, helper],
+            capture_output=True, text=True, timeout=120,
+        )
+    except FileNotFoundError:
+        return (False, "pkexec is not available on this system.")
+    except subprocess.TimeoutExpired:
+        return (False, "Timed out waiting for authentication.")
+    if r.returncode == 0:
+        return (True, "Device-access rule installed. Reconnecting to the deck…")
+    if r.returncode in (126, 127):   # pkexec: dismissed / not authorized
+        return (False, "Authentication was cancelled.")
+    return (False, (r.stderr or r.stdout or "Could not install the rule.").strip())

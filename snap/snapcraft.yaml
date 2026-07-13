@@ -91,6 +91,11 @@ parts:
         aarch64-*) find "$dest" -name 'libtransport.so'       -delete || true ;;
       esac
 
+      # bundle the udev rule so the in-app hint can hand users a copy command
+      # (a snap cannot install a udev rule itself)
+      mkdir -p "$inst/udev"
+      cp "$CRAFT_PART_SRC/packaging/99-fifine-deck.rules" "$inst/udev/"
+
   launcher:
     plugin: dump
     source: snap/local

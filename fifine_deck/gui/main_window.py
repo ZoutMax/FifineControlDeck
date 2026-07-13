@@ -656,7 +656,8 @@ class MainWindow(QMainWindow):
         """Under a confined snap, if no device was found on startup, tell the
         user how to grant USB access (the raw-usb interface is manual-connect,
         so a fresh install can't see the device until it's connected)."""
-        from ..actions import snap_usb_hint
+        from ..actions import (snap_usb_hint, can_install_udev_rule,
+                                install_udev_rule_pkexec)
         hint = snap_usb_hint()
         if not hint or self.controller.connected or self.config.snap_hint_dismissed:
             return
@@ -667,11 +668,27 @@ class MainWindow(QMainWindow):
         box.setInformativeText(hint)
         dont_show = QCheckBox("Don't show this again")
         box.setCheckBox(dont_show)
-        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        fix_btn = None
+        if can_install_udev_rule():
+            fix_btn = box.addButton("Enable device access",
+                                    QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Ok)
         box.exec()
         if dont_show.isChecked():
             self.config.snap_hint_dismissed = True
             self._queue_save()
+        if fix_btn is not None and box.clickedButton() is fix_btn:
+            ok, msg = install_udev_rule_pkexec()
+            if ok and self.controller.try_open():
+                QMessageBox.information(self, "Device access",
+                                        "Connected — your deck is ready.")
+            elif ok:
+                QMessageBox.information(self, "Device access",
+                    "Rule installed, but the deck still isn't detected — try "
+                    "unplugging and replugging it.")
+            else:
+                QMessageBox.warning(self, "Device access", msg)
+            self._set_status()
 
     # -- misc --------------------------------------------------------------
     def _queue_save(self):

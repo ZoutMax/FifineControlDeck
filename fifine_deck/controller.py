@@ -73,6 +73,22 @@ class DeckController:
         self._listen_thread.start()
         return opened
 
+    def try_open(self) -> bool:
+        """Re-enumerate and open the deck if not already connected.
+
+        Safe to call at runtime — e.g. right after installing the udev rule,
+        where `udevadm trigger` fires a 'change' (not 'add') event that the
+        hotplug listener ignores. Does not spawn another listener thread.
+        """
+        if self.device is not None:
+            return True
+        if self.manager is None:
+            self.manager = DeviceManager()
+        for dev in self.manager.enumerate():
+            if isinstance(dev, FifineDeck) and self._setup_device(dev):
+                return True
+        return False
+
     def _listen(self):
         try:
             self.manager.listen(

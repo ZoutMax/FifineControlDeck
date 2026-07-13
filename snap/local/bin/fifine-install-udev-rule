@@ -1,0 +1,21 @@
+#!/bin/bash
+# Install the fifine udev rule so a normal user can open /dev/hidraw for the
+# deck. Run as root — the app invokes this via `pkexec` (graphical auth), since
+# a snap cannot install a udev rule itself. Finds the bundled rule relative to
+# its own location, so it needs no environment from the caller (pkexec strips it).
+set -e
+
+self="$(readlink -f "$0")"
+root="${self%/bin/*}"                       # snap root (…/fifine-control-deck/current)
+rule="$root/udev/99-fifine-deck.rules"
+
+if [ ! -f "$rule" ]; then
+    echo "udev rule not found at: $rule" >&2
+    exit 1
+fi
+
+install -m 0644 "$rule" /etc/udev/rules.d/99-fifine-deck.rules
+udevadm control --reload-rules
+udevadm trigger
+udevadm settle
+echo "installed /etc/udev/rules.d/99-fifine-deck.rules"
