@@ -27,7 +27,15 @@ export FONTCONFIG_FILE="${FONTCONFIG_FILE:-/etc/fonts/fonts.conf}"
 # No system-tray host assumption inside the snap.
 export FIFINE_TRAY="${FIFINE_TRAY:-0}"
 
-# Prefer the snap's bundled interpreter if the python plugin provided one.
-PY="$SNAP/bin/python3"
+# Pin the bundled stdlib prefix. The python plugin's venv relocation is
+# non-deterministic — if pyvenv.cfg's `home` ends up pointing at the build
+# host's /usr, the interpreter looks for its stdlib in the runtime host's
+# /usr/lib/python3.12 (which may not exist) and dies with "No module named
+# 'encodings'". PYTHONHOME forces it to the stdlib we bundle at $SNAP/usr.
+export PYTHONHOME="$SNAP/usr"
+
+# Run the bundled interpreter directly (the venv symlink points at it anyway).
+PY="$SNAP/usr/bin/python3.12"
+[ -x "$PY" ] || PY="$SNAP/bin/python3"
 [ -x "$PY" ] || PY="python3"
 exec "$PY" -m fifine_deck "$@"

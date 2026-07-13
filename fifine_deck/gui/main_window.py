@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+
+log = logging.getLogger(__name__)
 
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer
 from PyQt6.QtGui import QAction, QIcon, QPixmap
@@ -659,8 +662,17 @@ class MainWindow(QMainWindow):
         from ..actions import (snap_usb_hint, can_install_udev_rule,
                                 install_udev_rule_pkexec)
         hint = snap_usb_hint()
-        if not hint or self.controller.connected or self.config.snap_hint_dismissed:
+        # "Working" means connected AND we actually read the firmware. A
+        # locked-out snap can enumerate the deck over libusb (connected, keys)
+        # while hidraw I/O is denied, leaving firmware empty — treat that as not
+        # working, or the fix (and the Enable-device-access button) would never
+        # appear for the very user who needs it.
+        dev = self.controller.device
+        working = bool(self.controller.connected
+                       and dev is not None and getattr(dev, "firmware_version", ""))
+        if not hint or working or self.config.snap_hint_dismissed:
             return
+        log.info("device not usable under snap (fw empty?) — showing access hint")
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Information)
         box.setWindowTitle("No device detected")
