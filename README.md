@@ -136,9 +136,13 @@ sudo usermod -aG plugdev "$USER"   # then log out/in if it was just added
 
 To build the `.deb` yourself: `./packaging/build-deb.sh` → `dist/`.
 
-**Snap / Ubuntu App Center:** snap packaging lives in `snap/` — see
-[`docs/SNAP.md`](docs/SNAP.md) for building and publishing (and the device-access
-caveat under snap confinement).
+**Snap / Ubuntu App Center:** the app builds as a **classic** snap that drives
+the deck (the strict snap can't — it has no route to `/dev/hidraw`). Packaging
+lives in `snap/`; see [`docs/SNAP.md`](docs/SNAP.md). On first run, if the deck
+isn't detected the app shows an **"Enable device access"** button that installs
+the required udev rule for you via a graphical password prompt and reconnects —
+no terminal needed (a snap can't install a udev rule itself). The classic build
+is pending Snap Store review; until it's published, use the PPA / `.deb`.
 
 **Launchpad PPA (apt):** Debian source packaging lives in `debian/` — see
 [`docs/PPA.md`](docs/PPA.md) to build the source package and upload it so users
