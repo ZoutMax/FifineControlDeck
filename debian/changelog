@@ -1,3 +1,9 @@
+fifine-control-deck (0.5.6ppa1) resolute; urgency=medium
+
+  * Rebuild of 0.5.6 for the zoutmax PPA (resolute).
+
+ -- ZoutMax <danielhoutmann@hotmail.com>  Mon, 13 Jul 2026 18:37:09 +0200
+
 fifine-control-deck (0.5.6) noble; urgency=medium
 
   * Fix a Qt 6 / Wayland startup warning ("Failed to register with host portal
