@@ -86,7 +86,7 @@ class DeckController:
         and the device re-opened fresh, so keys work immediately without a
         relaunch.
         """
-        if self.device is not None and getattr(self.device, "firmware_version", ""):
+        if self.device is not None and self.device.firmware_version:
             return True
         if self.device is not None:
             try:

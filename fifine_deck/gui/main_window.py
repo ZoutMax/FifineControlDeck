@@ -671,7 +671,7 @@ class MainWindow(QMainWindow):
         # appear for the very user who needs it.
         dev = self.controller.device
         working = bool(self.controller.connected
-                       and dev is not None and getattr(dev, "firmware_version", ""))
+                       and dev is not None and dev.firmware_version)
         if not hint or working or self.config.snap_hint_dismissed:
             return
         log.info("device not usable under snap (fw empty?) — showing access hint")
