@@ -61,7 +61,7 @@ def render_key(
             # If there's also a label, leave room at the bottom.
             if label:
                 box = int(box * 0.72)
-            icon.thumbnail((box, box), Image.LANCZOS)
+            icon.thumbnail((box, box), Image.Resampling.LANCZOS)
             x = (size - icon.width) // 2
             y = pad if label else (size - icon.height) // 2
             img.paste(icon, (x, y), icon)
@@ -131,9 +131,9 @@ def to_device_jpeg(image: Image.Image, rotation: int = 0,
     if rotation:
         image = image.rotate(rotation)
     if flip[0]:
-        image = image.transpose(Image.FLIP_LEFT_RIGHT)
+        image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
     if flip[1]:
-        image = image.transpose(Image.FLIP_TOP_BOTTOM)
+        image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
     buf = io.BytesIO()
     image.convert("RGB").save(buf, format="JPEG", quality=quality)
     return buf.getvalue()
