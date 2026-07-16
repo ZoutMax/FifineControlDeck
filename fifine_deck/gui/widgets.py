@@ -1,13 +1,15 @@
 """Reusable widgets: key button, action editor, action catalog, knob editor."""
 from __future__ import annotations
 
+import logging
+
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QMimeData, QPoint
 from PyQt6.QtGui import QPixmap, QColor, QIcon, QDrag
 from PyQt6.QtWidgets import (
     QToolButton, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
     QLineEdit, QPlainTextEdit, QComboBox, QPushButton, QColorDialog, QFileDialog,
     QDoubleSpinBox, QDialog, QScrollArea, QGridLayout, QListWidget,
-    QListWidgetItem, QAbstractItemView, QFrame, QApplication,
+    QListWidgetItem, QAbstractItemView, QFrame, QApplication, QMessageBox,
 )
 
 from typing import Callable
@@ -15,6 +17,8 @@ from typing import Callable
 from .. import rendering, assets
 from ..actions import ACTION_TYPES, ACTION_CATALOG
 from ..model import KeyConfig, KnobConfig, Action
+
+log = logging.getLogger(__name__)
 
 # Injected by the main window so action editors can offer a profile dropdown for
 # the "switch profile" action (avoids a widgets -> main_window import cycle).
@@ -305,6 +309,11 @@ class ActionParamsWidget(QWidget):
                 w.setEchoMode(QLineEdit.EchoMode.Password)
                 w.setProperty("kind", "password")
                 w.setProperty("secret_id", sid)
+                # We hold a secret_id but couldn't read the secret back — the
+                # keyring is locked or the entry is gone. The empty field is
+                # then a display artefact, NOT the user clearing the password,
+                # and _collect_password must not read it as one.
+                w.setProperty("secret_unreadable", bool(sid) and not initial)
                 w.textChanged.connect(self._emit)
             elif kind == "profiles":
                 w = QComboBox()
@@ -358,16 +367,41 @@ class ActionParamsWidget(QWidget):
         config; fall back to plaintext if no keyring backend is available."""
         from .. import secret_store
         text = w.text()
-        if not text:
-            return
         sid = w.property("secret_id") or ""
+        if not text:
+            # An empty field means "no password" only if we were able to show
+            # the current one. If the keyring was locked when this editor was
+            # built we never had it to display, so dropping secret_id here
+            # would destroy a working binding — permanently, and silently —
+            # just because the user edited the label next to it.
+            if sid and w.property("secret_unreadable"):
+                out["secret_id"] = sid
+            return
         if not sid:
             sid = secret_store.new_id()
         if secret_store.store(sid, text):
             w.setProperty("secret_id", sid)
+            w.setProperty("secret_unreadable", False)
             out["secret_id"] = sid
         else:
+            # No keyring, or it refused: the value can only be kept in
+            # config.json, in the clear. Warn once — the user chose a password
+            # action expecting it to be stored securely, and silently doing
+            # otherwise is exactly the kind of thing they'd want to know.
             out["password"] = text
+            self._warn_plaintext_once()
+
+    def _warn_plaintext_once(self):
+        if getattr(self, "_plaintext_warned", False):
+            return
+        self._plaintext_warned = True
+        log.warning("no usable keyring — password stored in config.json in cleartext")
+        QMessageBox.warning(
+            self, "Password not stored securely",
+            "No usable keyring was found, so this password will be saved in "
+            "your configuration file in cleartext (readable by anything running "
+            "as you).\n\nInstalling a keyring service — e.g. gnome-keyring, or "
+            "KWallet with kwalletmanager — lets it be stored securely instead.")
 
     def _emit(self, *_):
         if not self._building:
