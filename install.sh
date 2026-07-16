@@ -14,9 +14,11 @@ ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
 # Highest-versioned .deb for this arch, from a build tree or next to this
 # script. build-deb.sh names them fifine-control-deck_<version>_<arch>.deb.
 find_deb() {
+    # Sort on the basename: sorting full paths would rank every dist/ file
+    # before every ./ file ('d' < 'f'), regardless of version.
     ls -1 "dist/fifine-control-deck_"*"_${ARCH}.deb" \
           "fifine-control-deck_"*"_${ARCH}.deb" 2>/dev/null |
-        sort -V | tail -n1
+        awk -F/ '{ print $NF "\t" $0 }' | sort -V -k1,1 | tail -n1 | cut -f2
 }
 
 DEB="$(find_deb)"

@@ -112,6 +112,21 @@ def test_save_is_private_from_the_first_byte(tmp_path, monkeypatch):
     assert all(m == 0o600 for m in modes), f"temp file created {modes!r}, not 0600"
 
 
+def test_save_fixes_the_mode_of_a_stale_temp_file(tmp_path):
+    """O_CREAT's mode applies only when the file is CREATED. An older version
+    that crashed mid-save leaves config.json.tmp at umask-default 0644; without
+    an explicit fchmod, the reused tmp keeps 0644 and os.replace carries that
+    onto config.json — with a plaintext password inside on the no-keyring
+    fallback."""
+    p = tmp_path / "c.json"
+    stale = tmp_path / "c.json.tmp"
+    stale.write_text("{}")
+    os.chmod(stale, 0o644)
+
+    DeckConfig().save(str(p))
+    assert os.stat(p).st_mode & 0o777 == 0o600
+
+
 def test_default_config_path_is_resolved_at_call_time(tmp_path, monkeypatch):
     """conftest keeps tests off the real ~/.config by redirecting
     model.CONFIG_PATH. That only works if save()/load() read the module global

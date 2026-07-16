@@ -258,6 +258,10 @@ class DeckConfig:
         # leaves a window in which any local user can read it.
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
+            # O_CREAT's mode applies only when the file is CREATED. A stale
+            # .tmp left 0644 by an older version's crash would keep its mode
+            # and os.replace would carry that onto config.json — so force it.
+            os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w") as f:
                 json.dump(self.to_dict(), f, indent=2)
         except BaseException:

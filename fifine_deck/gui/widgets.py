@@ -37,15 +37,19 @@ class _NoWheelWhenUnfocused(QObject):
         return False
 
 
-def _protect_combo(combo: QComboBox, filt: QObject) -> QComboBox:
-    """Make `combo` only respond to the wheel once deliberately focused."""
-    combo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-    combo.installEventFilter(filt)
-    return combo
+def _protect_wheel(widget, filt: QObject):
+    """Make a wheel-sensitive editor (combo, spinbox) only respond to the
+    wheel once deliberately focused."""
+    widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    widget.installEventFilter(filt)
+    return widget
 
 # Injected by the main window so action editors can offer a profile dropdown for
 # the "switch profile" action (avoids a widgets -> main_window import cycle).
 PROFILES_PROVIDER: Callable[[], object] | None = None
+
+# One cleartext-fallback warning per app run (see _warn_plaintext_once).
+_PLAINTEXT_WARNED = False
 
 MIME_ACTION = "application/x-fifine-action"
 MIME_KEY = "application/x-fifine-key"    # dragging a key to rearrange it
@@ -277,7 +281,7 @@ class ActionParamsWidget(QWidget):
         self._layout.setContentsMargins(0, 0, 0, 0)
         # Owned by self so it outlives the combos it filters.
         self._nowheel = _NoWheelWhenUnfocused(self)
-        self.type_combo = _protect_combo(QComboBox(), self._nowheel)
+        self.type_combo = _protect_wheel(QComboBox(), self._nowheel)
         for key, meta in ACTION_TYPES.items():
             if key in self._exclude:
                 continue
@@ -338,10 +342,16 @@ class ActionParamsWidget(QWidget):
                 # keyring is locked or the entry is gone. The empty field is
                 # then a display artefact, NOT the user clearing the password,
                 # and _collect_password must not read it as one.
-                w.setProperty("secret_unreadable", bool(sid) and not initial)
+                unreadable = bool(sid) and not initial
+                w.setProperty("secret_unreadable", unreadable)
+                if unreadable:
+                    # Make the invisible state visible: a password IS bound,
+                    # we just can't display it. Without this cue the empty
+                    # field reads as "no password".
+                    w.setPlaceholderText("(saved — keyring locked)")
                 w.textChanged.connect(self._emit)
             elif kind == "profiles":
-                w = _protect_combo(QComboBox(), self._nowheel)
+                w = _protect_wheel(QComboBox(), self._nowheel)
                 provider = globals().get("PROFILES_PROVIDER")
                 cur = str(values.get(key, ""))
                 if provider:
@@ -353,7 +363,7 @@ class ActionParamsWidget(QWidget):
                 w.currentIndexChanged.connect(self._emit)
                 w.setProperty("kind", "profiles")
             elif kind.startswith("choice:"):
-                w = _protect_combo(QComboBox(), self._nowheel)
+                w = _protect_wheel(QComboBox(), self._nowheel)
                 for opt in kind.split(":", 1)[1].split(","):
                     w.addItem(opt)
                 j = w.findText(str(values.get(key, "")))
@@ -417,9 +427,14 @@ class ActionParamsWidget(QWidget):
             self._warn_plaintext_once()
 
     def _warn_plaintext_once(self):
-        if getattr(self, "_plaintext_warned", False):
+        # Process-wide, not per-instance: a new editor is built on every key
+        # selection (and one per step in a multi-action), so an instance flag
+        # would re-pop the modal on each click — forever, for the exact users
+        # the warning is aimed at.
+        global _PLAINTEXT_WARNED
+        if _PLAINTEXT_WARNED:
             return
-        self._plaintext_warned = True
+        _PLAINTEXT_WARNED = True
         log.warning("no usable keyring — password stored in config.json in cleartext")
         QMessageBox.warning(
             self, "Password not stored securely",
@@ -461,7 +476,9 @@ class _StepRow(QFrame):
         v.addWidget(self.apw)
         drow = QHBoxLayout()
         drow.addWidget(QLabel("then wait (s):"))
-        self.delay = QDoubleSpinBox()
+        # Inside a fixed-height scroll area: hover-scroll past it is routine,
+        # and an unfocused spinbox would eat the wheel and rewrite the delay.
+        self.delay = _protect_wheel(QDoubleSpinBox(), self.apw._nowheel)
         self.delay.setRange(0.0, 30.0)
         self.delay.setSingleStep(0.1)
         self.delay.setDecimals(1)
@@ -621,6 +638,11 @@ class ActionEditor(QWidget):
         self._kc.bg_color = default.bg_color
         self._kc.text_color = default.text_color
         self._kc.action = Action()
+        # The explicit Clear button IS intent to wipe the key, folder included.
+        # Folders survive mere action-type changes as dormant state, but a
+        # cleared key must not silently resurrect old pages when a folder is
+        # later dropped onto it.
+        self._kc.folder = None
         self.set_key(self._kc, self._index)   # refresh the editor fields
         self.changed.emit()
 

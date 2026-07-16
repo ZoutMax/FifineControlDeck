@@ -296,6 +296,48 @@ def test_a_dormant_folder_survives_a_save_and_reload(win, tmp_path):
     assert [p.name for p in reloaded.folder.pages] == ["Main", "Macros"]
 
 
+def test_the_explicit_clear_button_does_delete_the_folder(win):
+    """Dormancy is for implicit action-type changes only. Pressing Clear key
+    is stated intent to wipe the key: keeping the folder would render a blank
+    key that silently resurrects old pages when a folder action is later
+    dropped onto it."""
+    w, cfg, c = win
+    kc = cfg.active_profile().pages[0].key(1)
+    kc.action = mw.Action("open_folder", {})
+    w._ensure_folder(kc)
+    assert kc.folder is not None
+
+    w.editor.set_key(kc, 1)
+    w.editor._clear_key()
+
+    assert kc.folder is None
+    assert kc.action.type == "none"
+
+
+def test_hover_scrolling_the_step_delay_spinbox_cannot_change_it(qapp):
+    """The multi-step editor pins its scroll area to a fixed height, so
+    hover-scrolling past the per-step delay spinbox is routine — and an
+    unfocused spinbox eats the wheel and rewrites the timing."""
+    from PyQt6.QtCore import QPoint, QPointF, Qt as QtCore_Qt
+    from PyQt6.QtGui import QWheelEvent
+    from fifine_deck.gui.widgets import ActionParamsWidget
+
+    w = ActionParamsWidget()
+    w.set_action(mw.Action("multi", {"steps": [
+        {"action": {"type": "text", "params": {"text": "x"}}, "delay": 1.0},
+    ]}))
+    row = w._multi_editor._rows[0]
+    assert row.delay.value() == 1.0
+    assert not row.delay.hasFocus()
+
+    ev = QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, 120),
+                     QtCore_Qt.MouseButton.NoButton, QtCore_Qt.KeyboardModifier.NoModifier,
+                     QtCore_Qt.ScrollPhase.NoScrollPhase, False)
+    QApplication.sendEvent(row.delay, ev)
+
+    assert row.delay.value() == 1.0, "hover-scroll changed the step delay"
+
+
 def test_hover_scrolling_a_combo_cannot_change_it(qapp):
     """Qt lets an unfocused QComboBox eat wheel events and change value, so
     scrolling the editor panel silently rewrote whatever combo was under the

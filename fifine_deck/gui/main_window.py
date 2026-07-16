@@ -21,7 +21,7 @@ from ..model import DeckConfig, Profile, Page, KeyConfig, Action, Folder
 from ..actions import default_icon_for
 from ..controller import DeckController
 from .widgets import (KeyButton, ActionEditor, ActionCatalog, KnobEditor,
-                      ReorderDialog, _NoWheelWhenUnfocused, _protect_combo)
+                      ReorderDialog, _NoWheelWhenUnfocused, _protect_wheel)
 
 
 class _Bridge(QObject):
@@ -185,7 +185,7 @@ class MainWindow(QMainWindow):
         # Combos change value on hover-scroll unless filtered; switching the
         # profile or page moves what the physical deck is showing.
         self._nowheel = _NoWheelWhenUnfocused(self)
-        self.profile_combo = _protect_combo(QComboBox(), self._nowheel)
+        self.profile_combo = _protect_wheel(QComboBox(), self._nowheel)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_selected)
         bar.addWidget(self.profile_combo)
         for text, slot, tip in [("+", self._add_profile, "Add profile"),
@@ -200,7 +200,7 @@ class MainWindow(QMainWindow):
 
         bar.addSpacing(20)
         bar.addWidget(QLabel("Page:"))
-        self.page_combo = _protect_combo(QComboBox(), self._nowheel)
+        self.page_combo = _protect_wheel(QComboBox(), self._nowheel)
         self.page_combo.currentIndexChanged.connect(self._on_page_selected)
         bar.addWidget(self.page_combo)
         for text, slot, tip in [("+", self._add_page, "Add page"),

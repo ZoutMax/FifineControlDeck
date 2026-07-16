@@ -111,10 +111,18 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
         # and unlink ONLY if nobody answers. Removing it unconditionally (as
         # this used to) unlinks a LIVE instance's socket — which is precisely
         # how two copies ended up running, with IPC reaching the wrong one.
-        if _signal_existing("show"):
-            return 0
-        QLocalServer.removeServer(_IPC_NAME)      # nobody home: proven stale
-        if not server.listen(_IPC_NAME):
+        # Bounded retry: between our failed probe and our removeServer, a
+        # RACING launch may have reclaimed the stale socket and gone live —
+        # removing it then would unlink a live server (the very bug this
+        # rewrite fixes). So after every failed claim, probe again; only give
+        # up when neither claiming nor handing off works repeatedly.
+        for _ in range(3):
+            if _signal_existing("show"):
+                return 0
+            QLocalServer.removeServer(_IPC_NAME)
+            if server.listen(_IPC_NAME):
+                break
+        else:
             print(f"Could not claim the single-instance socket: "
                   f"{server.errorString()}", file=sys.stderr)
             return 1
