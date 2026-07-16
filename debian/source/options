@@ -16,9 +16,19 @@ tar-ignore = .hg
 tar-ignore = .bzr
 tar-ignore = dist
 tar-ignore = build
+# snapcraft's destructive-mode build trees. Running `snapcraft` in the repo root
+# leaves these behind (hundreds of MB, including a whole staged Python), and the
+# next `debuild -S` would sweep them into the PPA source upload.
+tar-ignore = parts
+tar-ignore = stage
+tar-ignore = prime
+tar-ignore = .snapcraft
+tar-ignore = .venv
 tar-ignore = .ruff_cache
 tar-ignore = .mypy_cache
 tar-ignore = .pytest_cache
+tar-ignore = .coverage
+tar-ignore = htmlcov
 tar-ignore = __pycache__
 tar-ignore = *.py[co]
 tar-ignore = *.snap

@@ -2,8 +2,12 @@
 # Runs as root (via pkexec): installs the udev rule AND fixes permissions on
 # the already-connected device so no replug is needed.
 set -e
-RULE_SRC="$(dirname "$0")/99-fifine-deck.rules"
-install -m 0644 "$RULE_SRC" /etc/udev/rules.d/99-fifine-deck.rules
+RULE_SRC="$(dirname "$0")/70-fifine-deck.rules"
+install -m 0644 "$RULE_SRC" /etc/udev/rules.d/70-fifine-deck.rules
+
+# Earlier versions installed this rule as 99-fifine-deck.rules, where its
+# TAG+="uaccess" never fired (73-seat-late.rules dispatches uaccess at 73).
+rm -f /etc/udev/rules.d/99-fifine-deck.rules
 udevadm control --reload-rules || true
 udevadm trigger || true
 

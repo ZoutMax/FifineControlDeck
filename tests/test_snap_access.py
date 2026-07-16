@@ -21,7 +21,7 @@ def classic_snap(tmp_path, monkeypatch):
     (tmp_path / "bin").mkdir()
     (tmp_path / "bin" / "fifine-install-udev-rule").write_text("#!/bin/sh\n")
     (tmp_path / "udev").mkdir()
-    (tmp_path / "udev" / "99-fifine-deck.rules").write_text("# rule\n")
+    (tmp_path / "udev" / "70-fifine-deck.rules").write_text("# rule\n")
     monkeypatch.setenv("SNAP", str(tmp_path))
     monkeypatch.setenv("SNAP_NAME", "fifine-control-deck")
     monkeypatch.setattr(actions, "IN_SNAP", True)
@@ -78,7 +78,7 @@ def test_classic_hint_points_at_the_bundled_rule(classic_snap):
     guidance must name the bundled rule — not tell the user to give up."""
     hint = actions.snap_usb_hint()
     assert hint is not None
-    assert str(classic_snap / "udev" / "99-fifine-deck.rules") in hint
+    assert str(classic_snap / "udev" / "70-fifine-deck.rules") in hint
     assert "udevadm" in hint
     assert "raw-usb" not in hint                       # strict-only advice
 

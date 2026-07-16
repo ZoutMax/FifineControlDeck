@@ -422,7 +422,7 @@ def snap_usb_hint() -> Optional[str]:
 
     Returns None unless running as a snap. The deck is driven over /dev/hidraw:
     - classic snap  -> can open it directly, but needs the host udev rule (a snap
-      cannot install one); the rule is bundled at $SNAP/udev/99-fifine-deck.rules.
+      cannot install one); the rule is bundled at $SNAP/udev/70-fifine-deck.rules.
     - strict snap   -> hidraw cannot be granted at all; this build should not be
       used for device control (kept for completeness).
     """
@@ -430,7 +430,7 @@ def snap_usb_hint() -> Optional[str]:
         return None
     name = os.environ.get("SNAP_NAME", "fifine-control-deck")
     if IN_SNAP_CLASSIC:
-        rule = os.path.join(os.environ.get("SNAP", ""), "udev", "99-fifine-deck.rules")
+        rule = os.path.join(os.environ.get("SNAP", ""), "udev", "70-fifine-deck.rules")
         return (
             "The deck is controlled over /dev/hidraw, which needs a udev rule so "
             "this snap can open it (a snap can't install the rule itself).\n\n"

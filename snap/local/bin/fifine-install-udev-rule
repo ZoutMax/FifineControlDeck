@@ -7,15 +7,21 @@ set -e
 
 self="$(readlink -f "$0")"
 root="${self%/bin/*}"                       # snap root (…/fifine-control-deck/current)
-rule="$root/udev/99-fifine-deck.rules"
+rule="$root/udev/70-fifine-deck.rules"
 
 if [ ! -f "$rule" ]; then
     echo "udev rule not found at: $rule" >&2
     exit 1
 fi
 
-install -m 0644 "$rule" /etc/udev/rules.d/99-fifine-deck.rules
+install -m 0644 "$rule" /etc/udev/rules.d/70-fifine-deck.rules
+
+# Earlier versions installed this same rule as 99-fifine-deck.rules, where its
+# TAG+="uaccess" never fired (73-seat-late.rules dispatches uaccess at 73, long
+# before 99). Drop that copy so it doesn't linger as a confusing no-op.
+rm -f /etc/udev/rules.d/99-fifine-deck.rules
+
 udevadm control --reload-rules
 udevadm trigger
 udevadm settle
-echo "installed /etc/udev/rules.d/99-fifine-deck.rules"
+echo "installed /etc/udev/rules.d/70-fifine-deck.rules"

@@ -1,0 +1,24 @@
+# fifine Control Deck for Linux — USB permissions
+# Gives the user at the active seat read/write access to the fifine / Hotspot
+# Stream Dock control device without root, and also grants the "plugdev" group.
+#
+# WHY 70- AND NOT 99-: udev applies rule files in lexical order, and systemd's
+# /usr/lib/udev/rules.d/73-seat-late.rules is what acts on the uaccess tag:
+#     TAG=="uaccess|xaccess-*", ENV{MAJOR}!="", RUN{builtin}+="uaccess"
+# A tag set by a file numbered 99 is applied long after 73 has already looked
+# for it, so the builtin never runs and no ACL is granted. This file must sort
+# before 73 — the distro's own uaccess rules live at 70-uaccess.rules.
+# Do not renumber this above 72 without re-reading the note above.
+#
+# uaccess is what makes this work on a stock install: "plugdev" is a
+# Debian/Ubuntu-ism that users are not always in, and that some distros
+# (Fedora, Arch) do not have at all. GROUP is kept as a fallback.
+#
+# Install:
+#   sudo cp 70-fifine-deck.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+# Then unplug/replug the device.
+
+# fifine Control Deck (HOTSPOTEKUSB) — VID 0x3142
+SUBSYSTEM=="usb", ATTR{idVendor}=="3142", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="3142", MODE="0660", GROUP="plugdev", TAG+="uaccess"

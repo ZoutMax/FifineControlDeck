@@ -59,8 +59,8 @@ install -m 0644 "$HERE/packaging/io.github.zoutmax.FifineControlDeck.metainfo.xm
 # Use /lib/udev/rules.d: read by ALL udev versions (old non-merged-usr and
 # modern merged-usr distros alike), maximising cross-flavour compatibility.
 mkdir -p "$STAGE/lib/udev/rules.d"
-install -m 0644 "$HERE/packaging/99-fifine-deck.rules" \
-        "$STAGE/lib/udev/rules.d/99-fifine-deck.rules"
+install -m 0644 "$HERE/packaging/70-fifine-deck.rules" \
+        "$STAGE/lib/udev/rules.d/70-fifine-deck.rules"
 
 # --- docs: copyright + changelog ----------------------------------------
 DOCDIR="$STAGE/usr/share/doc/$PKG"

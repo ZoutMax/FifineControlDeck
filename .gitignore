@@ -11,7 +11,10 @@ __pycache__/
 htmlcov/
 build/
 *.snap
-/parts/ /stage/ /prime/
+# snapcraft build trees — one per line: a space-joined pattern matches nothing.
+/parts/
+/stage/
+/prime/
 # debhelper / dpkg-buildpackage artifacts (PPA source builds)
 debian/.debhelper/
 debian/files

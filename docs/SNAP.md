@@ -90,7 +90,7 @@ not. Strict is a dead end for this hidraw device; classic is what we ship.
 1. **Classic Snap** (`confinement: classic`, no gnome extension) — drives the
    deck for real. Two caveats remain: classic snaps need **manual Snap Store
    review** before release (open a request on the snapcraft forum), and a snap
-   **cannot install a udev rule**, so the host still needs `99-fifine-deck.rules`
+   **cannot install a udev rule**, so the host still needs `70-fifine-deck.rules`
    (plugdev on VID `3142`) for `/dev/hidraw*` access.
 2. **`.deb` / Launchpad PPA (apt)** — the zero-friction channel: bundles the
    udev rule and drives the deck out of the box (`ppa:zoutmax/fifine`).
