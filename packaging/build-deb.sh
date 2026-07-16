@@ -29,6 +29,13 @@ if [ "$ARCH" = "arm64" ]; then
 else
     find "$STAGE/$APPDIR" -type f -name 'libtransport_arm64.so' -delete 2>/dev/null || true
 fi
+# Without the transport .so the app starts but can never open the deck — a
+# whole run of PPA debs shipped that way once (dpkg-source strips *.so by
+# default). Same guard as debian/rules; refuse to package a broken payload.
+if ! find "$STAGE/$APPDIR" -name 'libtransport*.so' -print -quit | grep -q .; then
+    echo "FATAL: libtransport .so missing from payload — refusing to build a broken deb" >&2
+    exit 1
+fi
 
 # --- launcher ------------------------------------------------------------
 mkdir -p "$STAGE/usr/bin"

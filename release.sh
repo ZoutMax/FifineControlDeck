@@ -27,8 +27,33 @@ sed -i -E "s/^version: .*/version: '$VERSION'/" snap/snapcraft.yaml
 DEBEMAIL="150600436+ZoutMax@users.noreply.github.com" DEBFULLNAME="ZoutMax" \
   dch -v "$VERSION" --distribution noble "$MSG"
 
+# AppStream metainfo: GNOME Software / App Center show the newest <release>
+# entry, and CI (tests/test_packaging.py) fails on a version skew. Skipping
+# this is how the metainfo sat at 0.5.2 while 0.5.7 shipped. Done in python:
+# sed would corrupt the XML on a message containing &, |, or angle brackets.
+VERSION="$VERSION" MSG="$MSG" python3 - <<'PYEOF'
+import os, time
+from xml.sax.saxutils import escape
+version, msg = os.environ["VERSION"], os.environ["MSG"]
+entry = ('    <release version="%s" date="%s">\n'
+         '      <description>\n        <p>%s</p>\n      </description>\n'
+         '    </release>\n') % (version, time.strftime("%Y-%m-%d"), escape(msg))
+for mi in ("packaging/io.github.zoutmax.FifineControlDeck.metainfo.xml",
+           "flatpak/io.github.zoutmax.FifineControlDeck.metainfo.xml"):
+    with open(mi) as f:
+        body = f.read()
+    if 'version="%s"' % version in body:
+        continue
+    assert "  <releases>\n" in body, mi
+    with open(mi, "w") as f:
+        f.write(body.replace("  <releases>\n", "  <releases>\n" + entry, 1))
+    print("metainfo: added %s to %s" % (version, mi))
+PYEOF
+command -v appstreamcli >/dev/null && appstreamcli validate packaging/*.metainfo.xml flatpak/*.metainfo.xml
+
 echo ">> committing + tagging v$VERSION"
-git add snap/snapcraft.yaml debian/changelog
+git add snap/snapcraft.yaml debian/changelog \
+        packaging/*.metainfo.xml flatpak/*.metainfo.xml
 git "${GIT_ID[@]}" commit -m "release: v$VERSION
 
 $MSG"

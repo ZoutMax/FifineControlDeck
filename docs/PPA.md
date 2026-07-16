@@ -35,19 +35,20 @@ It becomes `ppa:zoutmax/fifine`.
 
 ## Build + upload the source package
 
-The committed `debian/changelog` is already at `0.5.2` targeting `noble`, so the
-first upload is just a signed source build + `dput`. Sign with the key
-explicitly (`-k`), which avoids the maintainer-email/key mismatch:
+The version and series come from the top entry of `debian/changelog` (check
+with `head -1 debian/changelog`; `./release.sh <version>` maintains it). Sign
+with the key explicitly (`-k`), which avoids the maintainer-email/key mismatch:
 
 ```bash
 cd fifine-control-deck-linux
 KEY=D42A012CF26518F44F1E4F7BB1174D503445F8FE
+VERSION="$(sed -n '1s/.*(\([^)]*\)).*/\1/p' debian/changelog)"
 
 # build a SIGNED source package (.dsc + _source.changes):
 debuild -S -k$KEY
 
 # upload to your PPA:
-dput ppa:zoutmax/fifine ../fifine-control-deck_0.5.2_source.changes
+dput ppa:zoutmax/fifine "../fifine-control-deck_${VERSION}_source.changes"
 ```
 
 This was verified locally end-to-end (build + sign succeed); only the `dput`
@@ -76,7 +77,9 @@ sudo apt install fifine-control-deck
 ## Notes
 - **Per-series builds:** repeat the `dch --distribution <series>` + `debuild -S`
   + `dput` for each Ubuntu series you want (noble, jammy, oracular, …). Bump the
-  version suffix (`~ppa1`, `~ppa2`) on re-uploads.
+  version suffix (`ppa1`, `ppa2` — **no leading `~`**: a tilde sorts *below*
+  the base version, so apt would treat `0.5.7~ppa1` as older than `0.5.7` and
+  Launchpad would reject it as a downgrade) on re-uploads.
 - **Maintainer email:** `debian/control` uses the GitHub no-reply address; the
   *signed upload* uses your GPG identity (`DEBEMAIL`). Launchpad cares about the
   signing key, not the Maintainer field.
