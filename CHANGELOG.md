@@ -4,6 +4,56 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.5.8] - 2026-07-17
+### Fixed
+- **Device access for users not in `plugdev`.** The udev rule was numbered
+  `99-`, but systemd dispatches the `uaccess` tag at `73-seat-late.rules`, so
+  the tag was set too late and never granted an ACL — on a stock install the
+  deck was inaccessible unless you happened to be in `plugdev`. The rule is now
+  `70-fifine-deck.rules` (verified on hardware: the active-seat user gets an
+  explicit ACL), and installers clean up the stale `99-` copy.
+- **Passwords no longer pass through argv.** The "type password" action handed
+  the secret to xdotool/ydotool/wtype on the command line, where any local
+  process could read it via `/proc/<pid>/cmdline`. All three tools now receive
+  the text on stdin; a hung helper can no longer leak it into the journal
+  either. Side benefit: backslashes in passwords are now typed literally.
+- **A locked keyring no longer destroys a saved password.** Opening a key's
+  editor while the keyring was locked rendered the password field empty, and
+  editing any other field then silently dropped the binding forever. The
+  binding is now preserved whenever the secret couldn't be read; clearing a
+  *readable* password still works. Falling back to cleartext storage (no usable
+  keyring) now warns instead of happening silently.
+- **Folders survive action changes.** Changing a folder key's action type —
+  including by accidentally scrolling the mouse wheel over the Action dropdown
+  — destroyed the folder and every page in it, with no confirmation and no
+  undo. Folders now go dormant and return intact; dropdowns no longer respond
+  to hover-scroll at all.
+- **Profile add / config import no longer strand the app inside a stale
+  folder.** Both paths now reset navigation and re-render, so edits land where
+  the window says they do and the deck shows the profile you switched to.
+- **Single instance is actually enforced.** The old startup unconditionally
+  removed the IPC socket — including a *live* instance's — so racing launches
+  (autostart + launcher click) yielded two apps fighting over the deck and
+  overwriting each other's config. The socket is now claimed before any heavy
+  startup work, and a stale socket is only reclaimed after proving nobody is
+  listening.
+- `config.json` is created with private permissions from the first byte
+  (previously written world-readable and chmod'd afterwards).
+- `./install.sh` looked for a `.deb` filename no build ever produced and
+  failed 100% of the time; it now finds or builds the right package.
+### Changed
+- GitHub releases are now gated on the full test suite, type check, lint, and
+  smoke test running against the tagged commit (previously tags published
+  entirely untested builds).
+- `build-deb.sh` refuses to package a payload missing the USB transport
+  library (same guard the PPA path already had).
+- AppStream metainfo now tracks releases (was stuck at 0.5.2) and `release.sh`
+  maintains it automatically; CI fails on version skew.
+- Test suite: 43 → 220 tests, covering the GUI (thread marshalling, snap
+  access dialog, editors), the action engine, device input decoding, packaging
+  invariants, and every fix above via regression tests proven to fail on the
+  old code.
+
 ## [0.5.7] - 2026-07-13
 ### Added
 - **Snap: classic-confinement build that actually drives the deck.** The deck is
