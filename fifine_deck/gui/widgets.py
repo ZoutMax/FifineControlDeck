@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QMimeData, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QMimeData, QPoint, QObject, QEvent
 from PyQt6.QtGui import QPixmap, QColor, QIcon, QDrag
 from PyQt6.QtWidgets import (
     QToolButton, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
@@ -19,6 +19,29 @@ from ..actions import ACTION_TYPES, ACTION_CATALOG
 from ..model import KeyConfig, KnobConfig, Action
 
 log = logging.getLogger(__name__)
+
+
+class _NoWheelWhenUnfocused(QObject):
+    """Event filter that stops a combo box changing value on hover-scroll.
+
+    Qt lets a QComboBox consume wheel events without ever being focused, so
+    scrolling a panel silently rewrites whatever combo happens to be under the
+    cursor. On the action combo that is destructive — it changes what a key
+    does, and used to take the key's whole folder with it.
+    """
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.Type.Wheel and not obj.hasFocus():
+            ev.ignore()
+            return True                 # swallow it; let the panel scroll
+        return False
+
+
+def _protect_combo(combo: QComboBox, filt: QObject) -> QComboBox:
+    """Make `combo` only respond to the wheel once deliberately focused."""
+    combo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    combo.installEventFilter(filt)
+    return combo
 
 # Injected by the main window so action editors can offer a profile dropdown for
 # the "switch profile" action (avoids a widgets -> main_window import cycle).
@@ -252,7 +275,9 @@ class ActionParamsWidget(QWidget):
         self._multi_editor = None
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self.type_combo = QComboBox()
+        # Owned by self so it outlives the combos it filters.
+        self._nowheel = _NoWheelWhenUnfocused(self)
+        self.type_combo = _protect_combo(QComboBox(), self._nowheel)
         for key, meta in ACTION_TYPES.items():
             if key in self._exclude:
                 continue
@@ -316,7 +341,7 @@ class ActionParamsWidget(QWidget):
                 w.setProperty("secret_unreadable", bool(sid) and not initial)
                 w.textChanged.connect(self._emit)
             elif kind == "profiles":
-                w = QComboBox()
+                w = _protect_combo(QComboBox(), self._nowheel)
                 provider = globals().get("PROFILES_PROVIDER")
                 cur = str(values.get(key, ""))
                 if provider:
@@ -328,7 +353,7 @@ class ActionParamsWidget(QWidget):
                 w.currentIndexChanged.connect(self._emit)
                 w.setProperty("kind", "profiles")
             elif kind.startswith("choice:"):
-                w = QComboBox()
+                w = _protect_combo(QComboBox(), self._nowheel)
                 for opt in kind.split(":", 1)[1].split(","):
                     w.addItem(opt)
                 j = w.findText(str(values.get(key, "")))

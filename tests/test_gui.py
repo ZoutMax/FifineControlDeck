@@ -240,6 +240,84 @@ def test_importing_a_config_drops_navigation_into_the_discarded_one(win, monkeyp
     assert cfg.active_profile().name == "Imported"
 
 
+# -- folders survive an action-type change -----------------------------------
+
+def test_changing_a_folder_keys_action_keeps_the_folder(win):
+    """It used to drop kc.folder — every nested page and key — the moment the
+    type changed, with no confirmation and an autosave 600ms later. There is no
+    undo, and re-selecting open_folder mints a NEW empty folder rather than
+    restoring the old one."""
+    w, cfg, c = win
+    kc = cfg.active_profile().pages[0].key(1)
+    kc.action = mw.Action("open_folder", {})
+    w._ensure_folder(kc)
+    folder = kc.folder
+    assert folder is not None
+    folder.pages.append(mw.Page(name="Macros"))          # user builds it out
+
+    kc.action = mw.Action("volume", {"cmd": "mute"})     # a stray scroll does this
+    w._ensure_folder(kc)
+
+    assert kc.folder is folder, "the folder and its pages were destroyed"
+    assert [p.name for p in kc.folder.pages] == ["Main", "Macros"]
+
+
+def test_restoring_the_folder_action_restores_the_same_folder(win):
+    w, cfg, c = win
+    kc = cfg.active_profile().pages[0].key(1)
+    kc.action = mw.Action("open_folder", {})
+    w._ensure_folder(kc)
+    folder = kc.folder
+
+    kc.action = mw.Action("none", {})
+    w._ensure_folder(kc)
+    kc.action = mw.Action("open_folder", {})
+    w._ensure_folder(kc)
+
+    assert kc.folder is folder, "a new empty folder was minted"
+
+
+def test_a_dormant_folder_survives_a_save_and_reload(win, tmp_path):
+    """Keeping the folder in memory is only half of it — KeyConfig must still
+    serialize it while the action isn't open_folder."""
+    w, cfg, c = win
+    kc = cfg.active_profile().pages[0].key(1)
+    kc.action = mw.Action("open_folder", {})
+    w._ensure_folder(kc)
+    kc.folder.pages.append(mw.Page(name="Macros"))
+    kc.action = mw.Action("none", {})                    # dormant
+    w._ensure_folder(kc)
+
+    path = tmp_path / "c.json"
+    cfg.save(str(path))
+    from fifine_deck.model import DeckConfig
+    reloaded = DeckConfig.load(str(path)).active_profile().pages[0].key(1)
+    assert reloaded.folder is not None
+    assert [p.name for p in reloaded.folder.pages] == ["Main", "Macros"]
+
+
+def test_hover_scrolling_a_combo_cannot_change_it(qapp):
+    """Qt lets an unfocused QComboBox eat wheel events and change value, so
+    scrolling the editor panel silently rewrote whatever combo was under the
+    cursor — which on the action combo destroyed the key's folder."""
+    from PyQt6.QtCore import QPoint, QPointF, Qt as QtCore_Qt
+    from PyQt6.QtGui import QWheelEvent
+    from fifine_deck.gui.widgets import ActionParamsWidget
+
+    w = ActionParamsWidget()
+    w.set_action(mw.Action("open_folder", {}))
+    combo = w.type_combo
+    before = combo.currentIndex()
+    assert not combo.hasFocus()
+
+    ev = QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, -120),
+                     QtCore_Qt.MouseButton.NoButton, QtCore_Qt.KeyboardModifier.NoModifier,
+                     QtCore_Qt.ScrollPhase.NoScrollPhase, False)
+    QApplication.sendEvent(combo, ev)
+
+    assert combo.currentIndex() == before, "hover-scroll changed the action type"
+
+
 # -- snap device-access hint -------------------------------------------------
 
 def _snap(monkeypatch, hint="udev rule guidance", can_install=False):

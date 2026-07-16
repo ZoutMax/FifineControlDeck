@@ -20,7 +20,8 @@ from ..device import DEVICE_PROFILE
 from ..model import DeckConfig, Profile, Page, KeyConfig, Action, Folder
 from ..actions import default_icon_for
 from ..controller import DeckController
-from .widgets import KeyButton, ActionEditor, ActionCatalog, KnobEditor, ReorderDialog
+from .widgets import (KeyButton, ActionEditor, ActionCatalog, KnobEditor,
+                      ReorderDialog, _NoWheelWhenUnfocused, _protect_combo)
 
 
 class _Bridge(QObject):
@@ -181,7 +182,10 @@ class MainWindow(QMainWindow):
         # top bar
         bar = QHBoxLayout()
         bar.addWidget(QLabel("Profile:"))
-        self.profile_combo = QComboBox()
+        # Combos change value on hover-scroll unless filtered; switching the
+        # profile or page moves what the physical deck is showing.
+        self._nowheel = _NoWheelWhenUnfocused(self)
+        self.profile_combo = _protect_combo(QComboBox(), self._nowheel)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_selected)
         bar.addWidget(self.profile_combo)
         for text, slot, tip in [("+", self._add_profile, "Add profile"),
@@ -196,7 +200,7 @@ class MainWindow(QMainWindow):
 
         bar.addSpacing(20)
         bar.addWidget(QLabel("Page:"))
-        self.page_combo = QComboBox()
+        self.page_combo = _protect_combo(QComboBox(), self._nowheel)
         self.page_combo.currentIndexChanged.connect(self._on_page_selected)
         bar.addWidget(self.page_combo)
         for text, slot, tip in [("+", self._add_page, "Add page"),
@@ -556,7 +560,17 @@ class MainWindow(QMainWindow):
 
     # -- folders -----------------------------------------------------------
     def _ensure_folder(self, kc: KeyConfig):
-        """Create folder content (a page with a Back key) for a folder key."""
+        """Create folder content (a page with a Back key) for a folder key.
+
+        A folder is never discarded when the action type changes: it just goes
+        dormant, ignored while the action isn't open_folder, and comes back
+        intact if the key is made a folder again. This used to drop kc.folder —
+        every nested page and key — the instant the type changed, with no
+        confirmation and an autosave 600ms later. There is no undo, and a
+        folder is not recoverable by re-selecting open_folder: that mints a new
+        empty one. KeyConfig.to_dict/from_dict keep `folder` regardless of
+        action type, so a dormant folder survives a restart.
+        """
         if kc.action.type == "open_folder" and kc.folder is None:
             page = Page(name="Main")
             last = DEVICE_PROFILE["key_count"]
@@ -566,8 +580,6 @@ class MainWindow(QMainWindow):
             back.bg_color = "#26262c"
             back.action = Action("folder_back", {})
             kc.folder = Folder(name=kc.label or "Folder", pages=[page])
-        elif kc.action.type != "open_folder":
-            kc.folder = None
 
     def _on_open_folder(self, index: int):
         """Double-clicked a key: if it's a folder, navigate into it."""

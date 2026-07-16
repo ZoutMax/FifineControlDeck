@@ -70,7 +70,7 @@ def set_autostart(enable: bool) -> int:
 def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtGui import QIcon, QGuiApplication
-    from PyQt6.QtNetwork import QLocalServer
+    from PyQt6.QtNetwork import QAbstractSocket, QLocalServer
     from .gui.main_window import MainWindow
     from .gui.style import STYLESHEET
     from . import assets
@@ -84,10 +84,6 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
         print("No running instance to quit.")
         return 0
 
-    ensure_dirs()
-    config = DeckConfig.load()
-    controller = DeckController(config)
-
     # Set identity BEFORE constructing QApplication so the Wayland /
     # xdg-desktop-portal integration knows the app-id at init time. Setting it
     # afterwards makes Qt 6 emit a benign "Failed to register with host portal
@@ -97,20 +93,42 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
     QGuiApplication.setDesktopFileName("fifine-control-deck")
 
     app = QApplication(sys.argv)
+
+    # Claim the IPC name now, before the expensive init below. The probe above
+    # cannot stand alone: two launches racing (autostart plus a launcher click)
+    # both find no socket and both carry on. Claiming it first means the loser
+    # loses here, instead of after building a second window that fights the
+    # first over the device and silently overwrites its config on save.
+    server = QLocalServer()
+    if not server.listen(_IPC_NAME):
+        # serverError() returns a QAbstractSocket.SocketError in Qt6.
+        if server.serverError() != QAbstractSocket.SocketError.AddressInUseError:
+            print(f"Could not claim the single-instance socket: "
+                  f"{server.errorString()}", file=sys.stderr)
+            return 1
+        # In use: either a live instance beat us, or a crash left a stale
+        # socket. Only a connect attempt tells those apart, so hand off first
+        # and unlink ONLY if nobody answers. Removing it unconditionally (as
+        # this used to) unlinks a LIVE instance's socket — which is precisely
+        # how two copies ended up running, with IPC reaching the wrong one.
+        if _signal_existing("show"):
+            return 0
+        QLocalServer.removeServer(_IPC_NAME)      # nobody home: proven stale
+        if not server.listen(_IPC_NAME):
+            print(f"Could not claim the single-instance socket: "
+                  f"{server.errorString()}", file=sys.stderr)
+            return 1
+
+    ensure_dirs()
+    config = DeckConfig.load()
+    controller = DeckController(config)
+
     if assets.app_icon_path():
         app.setWindowIcon(QIcon(assets.app_icon_path()))
     app.setStyleSheet(STYLESHEET)
     app.setQuitOnLastWindowClosed(False)  # keep running when the window closes
 
     win = MainWindow(config, controller)
-
-    # IPC server: a second launch tells us to show the window (or quit).
-    QLocalServer.removeServer(_IPC_NAME)  # clear any stale socket
-    server = QLocalServer()
-    if not server.listen(_IPC_NAME):
-        # Lost a startup race with another instance; hand off to it and exit.
-        if _signal_existing("show"):
-            return 0
 
     def _on_conn():
         conn = server.nextPendingConnection()
