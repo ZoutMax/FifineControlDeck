@@ -4,7 +4,7 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.0] - 2026-07-17
 ### Added
 - **System-monitor keys** (#2): a new *System monitor* action turns a key into
   a live readout of **CPU, RAM, VRAM, network rate, or disk space**, styled as

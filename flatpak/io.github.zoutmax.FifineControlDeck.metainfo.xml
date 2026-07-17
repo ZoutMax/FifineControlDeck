@@ -44,6 +44,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.6.0" date="2026-07-17">
+      <description>
+        <p>System monitor keys: live CPU, RAM, VRAM, network and disk readouts on key LCDs as numbers, gauges or graphs</p>
+      </description>
+    </release>
     <release version="0.5.8" date="2026-07-17">
       <description>
         <p>Security and data-safety release: udev uaccess fix, passwords off argv, folder and keyring data-loss fixes, enforced single instance</p>
