@@ -43,6 +43,7 @@ parts:
       - pyudev
       - keyring
       - psutil
+      - pynvml
     stage-packages:
       - libudev1
       # Qt6 xcb platform plugin runtime deps (classic = no gnome platform snap)

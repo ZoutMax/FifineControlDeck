@@ -48,6 +48,12 @@ def _protect_wheel(widget, filt: QObject):
 # the "switch profile" action (avoids a widgets -> main_window import cycle).
 PROFILES_PROVIDER: Callable[[], object] | None = None
 
+# Injected by the main window: renders a monitor key's preview from the
+# controller's sampler (last reading + history), so grid previews show real
+# values even with no device connected and never regress to the placeholder
+# on rebuilds. Returns a PIL image, or None to fall back to the placeholder.
+MONITOR_PREVIEW_PROVIDER: Callable[[KeyConfig, int], object] | None = None
+
 # One cleartext-fallback warning per app run (see _warn_plaintext_once).
 _PLAINTEXT_WARNED = False
 
@@ -164,12 +170,16 @@ class KeyButton(QToolButton):
 
     def update_preview(self, kc: KeyConfig):
         if kc.action.type == "monitor":
-            # Placeholder frame; live frames stream in via the controller's
-            # on_monitor_image callback and replace it within a tick.
-            from .. import monitors
-            spec = monitors.MonitorSpec.from_params(kc.action.params)
-            img = monitors.render_monitor(self._size, spec, monitors.placeholder(spec),
-                                          [], kc.bg_color, kc.text_color)
+            # Preferably the controller's live values (works offline too);
+            # placeholder only when no provider is wired (bare widget tests).
+            provider = globals().get("MONITOR_PREVIEW_PROVIDER")
+            img = provider(kc, self._size) if provider else None
+            if img is None:
+                from .. import monitors
+                spec = monitors.MonitorSpec.from_params(kc.action.params)
+                img = monitors.render_monitor(self._size, spec,
+                                              monitors.placeholder(spec),
+                                              [], kc.bg_color, kc.text_color)
             self.setIcon(QIcon(QPixmap.fromImage(rendering.pil_to_qimage(img))))
             return
         icon = kc.icon
@@ -460,7 +470,9 @@ class ActionParamsWidget(QWidget):
 # ---------------------------------------------------------------------------
 # Multi-action editor: an ordered list of sub-action steps with per-step delay
 # ---------------------------------------------------------------------------
-_STEP_EXCLUDE = {"multi", "open_folder", "folder_back"}   # not valid as a step
+# Not valid as a step: nesting/navigation, and monitor (a live display, not an
+# executable action — as a step it would be a silent no-op).
+_STEP_EXCLUDE = {"multi", "open_folder", "folder_back", "monitor"}
 
 
 class _StepRow(QFrame):
@@ -751,7 +763,9 @@ class KnobEditor(QWidget):
         self._pickers = {}
         for name, action in (("Press", kn.press), ("Rotate ◀", kn.left), ("Rotate ▶", kn.right)):
             v.addWidget(QLabel(name))
-            p = ActionParamsWidget()
+            # monitor is display-only — bound to a knob gesture it would be a
+            # silent no-op, so don't offer it
+            p = ActionParamsWidget(exclude={"monitor"})
             p.set_action(action)
             p.changed.connect(self._emit)
             self._pickers[name] = p

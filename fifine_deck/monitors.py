@@ -40,6 +40,8 @@ METRICS = {
     "disk": "DISK",
 }
 STYLES = ("number", "gauge", "graph")
+PERCENT_METRICS = frozenset({"cpu", "ram", "vram", "disk"})
+TARGETED_METRICS = frozenset({"disk", "net"})   # the only metrics a target applies to
 
 HISTORY_LEN = 32             # sparkline points kept per metric
 
@@ -56,7 +58,10 @@ class Reading:
     text: str                # big value line ("37%", "1.2 MB/s")
     sub: str = ""            # small detail line ("6.2/16 GB", "↑ 340 kB/s")
     ok: bool = True
-    rate: float = 0.0        # rate metrics only: value the sparkline plots
+    # What the sparkline records for this sample. None = a gap (failed sample,
+    # warm-up), which the graph must SKIP — recording 0.0 instead would draw a
+    # false dip to zero.
+    sample: float | None = None
 
 
 @dataclass(frozen=True)
@@ -81,11 +86,19 @@ class MonitorSpec:
         except (TypeError, ValueError):
             interval = 1.0
         interval = max(0.5, min(60.0, interval))
-        return cls(metric=metric, style=style, interval=interval,
-                   target=str(p.get("target", "")).strip())
+        target = str(p.get("target", "")).strip()
+        if metric not in TARGETED_METRICS:
+            # A stray target on cpu/ram/vram would needlessly split the shared
+            # sample stream (and with it psutil's global delta state).
+            target = ""
+        return cls(metric=metric, style=style, interval=interval, target=target)
 
     def key(self) -> tuple:
-        """History/cache key: same metric+target share one sample stream."""
+        """Stream key: keys with the same metric+target share ONE sample
+        stream (one reading + one history per tick). This is not just an
+        optimisation — cpu_percent and net counters are since-last-call
+        deltas, so sampling a stream twice in quick succession returns
+        garbage (~0) to the second caller."""
         return (self.metric, self.target)
 
 
@@ -116,9 +129,13 @@ class Sampler:
         self._last: dict[tuple, Reading] = {}
         self._net_prev: dict[str, tuple[float, int, int]] = {}
         self._vram_backend = None      # probed lazily; ("none",) when absent
+        self._cpu_primed = False       # psutil's first cpu_percent is garbage
 
     # -- public ------------------------------------------------------------
     def sample(self, spec: MonitorSpec) -> Reading:
+        """Take ONE sample of this spec's stream. The caller must call this at
+        most once per stream per tick (see MonitorSpec.key) — every key of the
+        stream then shares the returned reading."""
         fn = getattr(self, f"_sample_{spec.metric}", None)
         try:
             reading = fn(spec) if fn else Reading(None, "n/a", ok=False)
@@ -128,13 +145,13 @@ class Sampler:
         k = spec.key()
         self._last[k] = reading
         hist = self._hist.setdefault(k, deque(maxlen=HISTORY_LEN))
-        hist.append(reading.pct if reading.pct is not None else _rate_of(reading))
+        hist.append(reading.sample)
         return reading
 
     def last(self, spec: MonitorSpec) -> Reading:
         return self._last.get(spec.key()) or placeholder(spec)
 
-    def history(self, spec: MonitorSpec) -> list[float]:
+    def history(self, spec: MonitorSpec) -> list[float | None]:
         return list(self._hist.get(spec.key(), ()))
 
     # -- metrics -----------------------------------------------------------
@@ -142,21 +159,29 @@ class Sampler:
         if psutil is None:
             return _NO_PSUTIL
         pct = psutil.cpu_percent(interval=None)
-        return Reading(pct, f"{pct:.0f}%", f"{os.cpu_count() or '?'} cores")
+        if not self._cpu_primed:
+            # psutil documents the first non-blocking cpu_percent() as a
+            # meaningless 0.0 (no since-last-call window yet) — show a
+            # warm-up frame instead of a fake 0%.
+            self._cpu_primed = True
+            return Reading(None, "…", METRICS["cpu"])
+        return Reading(pct, f"{pct:.0f}%", f"{os.cpu_count() or '?'} cores",
+                       sample=pct)
 
     def _sample_ram(self, spec: MonitorSpec) -> Reading:
         if psutil is None:
             return _NO_PSUTIL
         vm = psutil.virtual_memory()
         return Reading(vm.percent, f"{vm.percent:.0f}%",
-                       f"{_fmt_bytes(vm.used)} / {_fmt_bytes(vm.total)}")
+                       f"{_fmt_bytes(vm.used)} / {_fmt_bytes(vm.total)}",
+                       sample=vm.percent)
 
     def _sample_disk(self, spec: MonitorSpec) -> Reading:
         if psutil is None:
             return _NO_PSUTIL
         du = psutil.disk_usage(spec.target or "/")
         return Reading(du.percent, f"{du.percent:.0f}%",
-                       f"{_fmt_bytes(du.free)} free")
+                       f"{_fmt_bytes(du.free)} free", sample=du.percent)
 
     def _sample_net(self, spec: MonitorSpec) -> Reading:
         if psutil is None:
@@ -177,7 +202,8 @@ class Sampler:
         down = max(0.0, (io.bytes_recv - prev[1]) / dt)
         up = max(0.0, (io.bytes_sent - prev[2]) / dt)
         # the graph plots the download rate
-        return Reading(None, f"↓ {_fmt_rate(down)}", f"↑ {_fmt_rate(up)}", rate=down)
+        return Reading(None, f"↓ {_fmt_rate(down)}", f"↑ {_fmt_rate(up)}",
+                       sample=down)
 
     def _sample_vram(self, spec: MonitorSpec) -> Reading:
         b = self._vram_backend
@@ -195,14 +221,10 @@ class Sampler:
             return Reading(None, "n/a", "no dedicated GPU", ok=False)
         pct = 100.0 * used / total if total else 0.0
         return Reading(pct, f"{pct:.0f}%",
-                       f"{_fmt_bytes(used)} / {_fmt_bytes(total)}")
+                       f"{_fmt_bytes(used)} / {_fmt_bytes(total)}", sample=pct)
 
 
 _NO_PSUTIL = Reading(None, "n/a", "psutil missing", ok=False)
-
-
-def _rate_of(reading: Reading) -> float:
-    return float(reading.rate)
 
 
 def _probe_vram():
@@ -234,7 +256,7 @@ def _mix(a, b, t: float):
 
 
 def render_monitor(size: int, spec: MonitorSpec, reading: Reading,
-                   history: list[float] | None = None,
+                   history: list[float | None] | None = None,
                    bg_color: str = "#101020",
                    text_color: str = "#ffffff") -> Image.Image:
     """Draw one monitor frame as an upright RGB key image."""
@@ -256,7 +278,8 @@ def render_monitor(size: int, spec: MonitorSpec, reading: Reading,
     elif style == "graph":
         _center_text(draw, label, size, size * 0.06, int(size * 0.11), dim)
         _center_text(draw, reading.text, size, size * 0.18, int(size * 0.17), fg)
-        _draw_graph(draw, size, history or [], reading, accent, _mix(bg, fg, 0.12))
+        _draw_graph(draw, size, history or [], spec.metric in PERCENT_METRICS,
+                    accent, _mix(bg, fg, 0.12))
     else:                                          # number
         _center_text(draw, label, size, size * 0.08, int(size * 0.12), dim)
         _center_text(draw, reading.text, size, size * 0.34, int(size * 0.24), fg)
@@ -289,17 +312,18 @@ def _draw_gauge(draw, size: int, pct: float, accent, track):
         draw.arc(box, start, start + int(span * frac), fill=accent, width=width)
 
 
-def _draw_graph(draw, size: int, history: list[float], reading: Reading,
+def _draw_graph(draw, size: int, history: list[float | None], is_percent: bool,
                 accent, grid):
     """Sparkline over the lower part of the key. Percent metrics are scaled to
-    0..100; rate metrics normalize to the window's maximum."""
+    0..100; rate metrics normalize to the window's maximum. None entries are
+    gaps (failed samples / warm-up) and are skipped, never drawn as zero."""
     top, bottom = int(size * 0.42), int(size * 0.94)
     left, right = int(size * 0.06), int(size * 0.94)
     draw.rectangle((left, top, right, bottom), outline=grid, width=1)
     pts = [v for v in history if v is not None]
     if len(pts) < 2:
         return
-    scale = 100.0 if reading.pct is not None else max(max(pts), 1.0)
+    scale = 100.0 if is_percent else max(max(pts), 1.0)
     h, w = bottom - top, right - left
     n = len(pts)
     xy = []

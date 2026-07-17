@@ -25,8 +25,8 @@ def test_spec_defaults_and_validation():
     s = MonitorSpec.from_params({})
     assert (s.metric, s.style, s.interval, s.target) == ("cpu", "number", 1.0, "")
     s = MonitorSpec.from_params(
-        {"metric": " RAM ", "style": "GAUGE", "interval": "2.5", "target": " / "})
-    assert (s.metric, s.style, s.interval, s.target) == ("ram", "gauge", 2.5, "/")
+        {"metric": " DISK ", "style": "GAUGE", "interval": "2.5", "target": " / "})
+    assert (s.metric, s.style, s.interval, s.target) == ("disk", "gauge", 2.5, "/")
 
 
 def test_spec_rejects_garbage_without_raising():
@@ -47,11 +47,47 @@ def test_spec_interval_is_clamped():
 def test_cpu_ram_disk_produce_sane_percentages():
     pytest.importorskip("psutil")
     s = Sampler()
+    s.sample(MonitorSpec.from_params({"metric": "cpu"}))   # cpu warm-up sample
     for metric in ("cpu", "ram", "disk"):
         r = s.sample(MonitorSpec.from_params({"metric": metric}))
         assert r.ok, metric
         assert r.pct is not None and 0.0 <= r.pct <= 100.0, metric
         assert r.text.endswith("%"), metric
+        assert r.sample == r.pct, metric
+
+
+def test_first_cpu_sample_is_a_warmup_not_a_fake_zero():
+    # psutil's first non-blocking cpu_percent() is a documented-meaningless
+    # 0.0 — it must surface as a warm-up frame and a history GAP, never as 0%.
+    pytest.importorskip("psutil")
+    s = Sampler()
+    spec = MonitorSpec.from_params({"metric": "cpu"})
+    first = s.sample(spec)
+    assert first.pct is None and first.text == "…"
+    assert s.history(spec) == [None]
+    second = s.sample(spec)
+    assert second.pct is not None and second.text.endswith("%")
+
+
+def test_spec_target_only_applies_to_disk_and_net():
+    # A stray target on cpu/ram/vram would split the shared sample stream —
+    # and cpu/net use global since-last-call state, so split streams corrupt
+    # each other's deltas.
+    assert MonitorSpec.from_params({"metric": "cpu", "target": "x"}).target == ""
+    assert MonitorSpec.from_params({"metric": "ram", "target": "x"}).target == ""
+    assert MonitorSpec.from_params({"metric": "vram", "target": "x"}).target == ""
+    assert MonitorSpec.from_params({"metric": "disk", "target": "/x"}).target == "/x"
+    assert MonitorSpec.from_params({"metric": "net", "target": "eth0"}).target == "eth0"
+
+
+def test_failed_samples_leave_history_gaps_not_zeros():
+    pytest.importorskip("psutil")
+    s = Sampler()
+    spec = MonitorSpec.from_params({"metric": "disk",
+                                    "target": "/definitely/not/a/mount"})
+    s.sample(spec)
+    s.sample(spec)
+    assert s.history(spec) == [None, None]   # gaps, not false dips to 0%
 
 
 def test_bad_disk_target_degrades_to_na():
@@ -81,7 +117,8 @@ def test_net_rate_from_counter_deltas(monkeypatch):
     second = s.sample(spec)             # 1 MB in 1 s
     assert second.text == "↓ 1.0 MB/s"
     assert second.sub == "↑ 0 B/s"
-    assert second.rate == pytest.approx(1_000_000.0)
+    assert second.sample == pytest.approx(1_000_000.0)
+    assert s.history(spec)[0] is None   # the warm-up left a gap, not a 0
 
 
 def test_net_unknown_interface_degrades_to_na(monkeypatch):
@@ -148,11 +185,16 @@ def test_render_gauge_without_percentage_falls_back_to_number():
     assert img.size == (100, 100)     # must not raise on pct=None
 
 
-def test_render_graph_handles_empty_and_rate_history():
+def test_render_graph_handles_empty_gappy_and_rate_history():
     spec = MonitorSpec.from_params({"metric": "net", "style": "graph"})
-    r = Reading(None, "↓ 5 kB/s", rate=5000.0)
+    r = Reading(None, "↓ 5 kB/s", sample=5000.0)
     assert render_monitor(100, spec, r, []).size == (100, 100)
     assert render_monitor(100, spec, r, [0.0, 5000.0, 2500.0]).size == (100, 100)
+    # gaps (None) from failed samples must be skipped, not plotted
+    assert render_monitor(100, spec, r, [None, 5000.0, None, 2500.0]).size == (100, 100)
+    cpu = MonitorSpec.from_params({"metric": "cpu", "style": "graph"})
+    assert render_monitor(100, cpu, Reading(None, "…"),
+                          [50.0, None, 60.0]).size == (100, 100)
 
 
 def test_render_actually_draws_something():
@@ -182,7 +224,7 @@ def test_pressing_a_monitor_key_is_a_noop(caplog):
 # ---------------------------------------------------------------------------
 controller_mod = pytest.importorskip("fifine_deck.controller")
 from fifine_deck.controller import DeckController          # noqa: E402
-from fifine_deck.model import DeckConfig                   # noqa: E402
+from fifine_deck.model import DeckConfig, Page             # noqa: E402
 from tests.test_controller import MockDevice               # noqa: E402
 
 
@@ -324,6 +366,108 @@ def test_flash_skips_monitor_keys():
         assert dev.key_images[1] is painted    # untouched by the flash
     finally:
         c.stop()
+
+
+class _HookedSampler(_ScriptedSampler):
+    """ScriptedSampler that fires a hook after each sample — simulates GUI
+    mutations landing during the unlocked sampling window of monitor_tick."""
+
+    def __init__(self, readings, hook):
+        super().__init__(readings)
+        self._hook = hook
+
+    def sample(self, spec):
+        r = super().sample(spec)
+        self._hook()
+        return r
+
+
+def test_same_metric_keys_share_one_sample_per_tick():
+    """cpu_percent / net counters are since-last-call deltas: sampling once per
+    KEY hands every key after the first a garbage ~0 (review finding). All keys
+    of a stream must share one sample."""
+    cfg = DeckConfig()
+    page = cfg.active_profile().pages[0]
+    page.key(1).action = Action("monitor", {"metric": "cpu", "style": "number"})
+    page.key(2).action = Action("monitor", {"metric": "cpu", "style": "graph"})
+    c = DeckController(cfg)
+    _quiesce(c)
+    dev = MockDevice()
+    assert c._setup_device(dev)
+    c._sampler = _ScriptedSampler([Reading(42.0, "42%")])
+    c._monitor_state.clear()
+    dev.key_images.clear()
+    try:
+        c.monitor_tick(now=100.0)
+        assert c._sampler.calls == 1            # ONE sample for the shared stream
+        assert 1 in dev.key_images and 2 in dev.key_images   # both keys painted
+    finally:
+        c.stop()
+
+
+def test_first_tick_samples_even_when_uptime_is_below_interval():
+    # monotonic() is seconds-since-boot: with a 0.0 never-sampled sentinel a
+    # fresh key looked "recently sampled" until uptime reached its interval.
+    c, dev = _monitored_controller([Reading(10.0, "10%")])
+    try:
+        c.monitor_tick(now=0.2)
+        assert 1 in dev.key_images
+    finally:
+        c.stop()
+
+
+def test_render_page_resets_monitor_gates():
+    c, dev = _monitored_controller([Reading(10.0, "10%"), Reading(11.0, "11%")])
+    try:
+        c.monitor_tick(now=100.0)
+        assert c._monitor_state
+        c.render_page()                # page/profile switch, import, reconnect
+        assert c._monitor_state == {}  # next tick resamples immediately
+    finally:
+        c.stop()
+
+
+def test_key_retyped_mid_tick_is_not_overpainted():
+    c, dev = _monitored_controller([])
+    def retype():
+        c.page().keys[1].action = Action("launch_app", {"command": "true"})
+    c._sampler = _HookedSampler([Reading(10.0, "10%")], retype)
+    try:
+        c.monitor_tick(now=100.0)
+        assert dev.key_images == {}            # stale frame must not paint...
+        assert 1 not in c._monitor_state       # ...nor stamp a stale gate
+    finally:
+        c.stop()
+
+
+def test_page_switched_mid_tick_frames_are_dropped():
+    c, dev = _monitored_controller([])
+    c.config.active_profile().pages.append(Page(name="P2"))
+    got = []
+    c.on_monitor_image = lambda i, img: got.append(i)
+    def switch():
+        c.page_index = 1
+    c._sampler = _HookedSampler([Reading(10.0, "10%")], switch)
+    try:
+        c.monitor_tick(now=100.0)
+        assert dev.key_images == {}            # old page's slot not painted
+        assert got == []                       # GUI got no stale frame either
+        assert 1 not in c._monitor_state
+    finally:
+        c.stop()
+
+
+def test_monitor_excluded_from_knob_and_step_editors(qapp):
+    # As a knob gesture or macro step a monitor is a silent no-op — it must
+    # not be offered there, while staying available for keys.
+    from fifine_deck.gui.widgets import (ActionParamsWidget, KnobEditor,
+                                         _STEP_EXCLUDE)
+    from fifine_deck.model import KnobConfig
+    assert "monitor" in _STEP_EXCLUDE
+    ke = KnobEditor(1, KnobConfig())
+    for picker in ke._pickers.values():
+        assert picker.type_combo.findData("monitor") == -1
+    assert ActionParamsWidget().type_combo.findData("monitor") >= 0
 
 
 def test_monitor_callback_receives_frames_and_survives_errors():

@@ -39,7 +39,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # mypy pinned so a future release can't silently break the hard gate.
-          pip install PyQt6 Pillow pyudev ruff pytest pytest-timeout mypy==2.3.0
+          pip install PyQt6 Pillow psutil pyudev ruff pytest pytest-timeout mypy==2.3.0
 
       - name: Lint with ruff
         run: |

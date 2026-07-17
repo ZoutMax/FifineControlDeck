@@ -47,6 +47,9 @@ class MainWindow(QMainWindow):
         # Let action editors offer a profile dropdown for the "switch profile" action.
         from . import widgets as _widgets
         _widgets.PROFILES_PROVIDER = lambda: self.config.profiles
+        # Let grid previews render monitor keys from the controller's live
+        # sampler (last reading + history) instead of a static placeholder.
+        _widgets.MONITOR_PREVIEW_PROVIDER = self._monitor_preview
 
         self.bridge = _Bridge()
         self.bridge.connected.connect(self._on_connected)
@@ -661,6 +664,17 @@ class MainWindow(QMainWindow):
         b = self.buttons.get(index)
         if b:
             b.flash(pressed)
+
+    def _monitor_preview(self, kc, size: int):
+        """Render a monitor key's grid preview from the controller's sampler.
+        Reads the last cached reading (dict lookups only — safe against the
+        monitor thread), so previews are live even with no device connected."""
+        from .. import monitors
+        spec = monitors.MonitorSpec.from_params(kc.action.params)
+        sampler = self.controller._sampler
+        return monitors.render_monitor(size, spec, sampler.last(spec),
+                                       sampler.history(spec),
+                                       kc.bg_color, kc.text_color)
 
     def _on_monitor_image(self, index: int, img):
         """Live monitor frame from the controller thread (via the bridge)."""

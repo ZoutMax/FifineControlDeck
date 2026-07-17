@@ -275,6 +275,11 @@ class DeckController:
 
     def render_page(self) -> None:
         with self._lock:
+            # A page render is always a context change (page/profile/folder
+            # switch, import, reconnect): drop every monitor gate so the new
+            # page's monitor keys sample + paint on the next tick instead of
+            # inheriting a stale timestamp/signature from the old page.
+            self._monitor_state.clear()
             dev = self.device
             if dev:
                 # drop animations from the previous page before re-rendering
@@ -321,33 +326,55 @@ class DeckController:
                 self._monitor_state.clear()
             return
         live = {i for i, _ in entries}
-        pushed = False
+        # Which keys are due? (last_t None = never sampled — an explicit
+        # sentinel, because time.monotonic() is small right after boot and a
+        # 0.0 sentinel would wrongly look "recently sampled".)
+        due = []
         for index, kc in entries:
             spec = monitors.MonitorSpec.from_params(kc.action.params)
-            last_t, last_sig = self._monitor_state.get(index, (0.0, None))
-            if now - last_t < spec.interval:
-                continue
-            reading = self._sampler.sample(spec)
+            last_t = self._monitor_state.get(index, (None, None))[0]
+            if last_t is None or now - last_t >= spec.interval:
+                due.append((index, kc, spec))
+        # Sample each STREAM once, shared by all its keys. cpu_percent and the
+        # net counters are since-last-call deltas with global state — sampling
+        # once per key would hand every key after the first a garbage ~0.
+        readings: dict[tuple, monitors.Reading] = {}
+        for _, _, spec in due:
+            if spec.key() not in readings:
+                readings[spec.key()] = self._sampler.sample(spec)
+        pushed = False
+        for index, kc, spec in due:
+            reading = readings[spec.key()]
             # Only repaint when something visible changed (graphs always move).
             sig = (spec, kc.bg_color, kc.text_color, reading.text, reading.sub,
                    None if reading.pct is None else int(reading.pct))
-            self._monitor_state[index] = (now, sig)
+            last_sig = self._monitor_state.get(index, (None, None))[1]
             if sig == last_sig and spec.style != "graph":
+                self._monitor_state[index] = (now, sig)
                 continue
             img = monitors.render_monitor(size, spec, reading,
                                           self._sampler.history(spec),
                                           kc.bg_color, kc.text_color)
+            emit = False
             with self._lock:
                 dev = self.device
-                # `page` may have been navigated away from while sampling —
-                # never paint another page's key slot.
-                if dev and self.page() is page and index not in self._gif_keys:
-                    try:
-                        dev.set_key_image_pil(index, img)
-                        pushed = True
-                    except Exception as e:
-                        log.error("monitor key %s failed: %s", index, e)
-            if self.on_monitor_image:
+                cur = self.page().keys.get(index)
+                # The page may have switched, or the key been retyped/cleared/
+                # swapped, while we sampled outside the lock. Never paint (or
+                # emit, or stamp state for) a stale frame — the state entry
+                # would suppress the NEW key's first repaint for a full
+                # interval, and the frame would show the wrong metric.
+                if (self.page() is page and cur is kc
+                        and cur.action.type == "monitor"):
+                    self._monitor_state[index] = (now, sig)
+                    emit = True
+                    if dev and index not in self._gif_keys:
+                        try:
+                            dev.set_key_image_pil(index, img)
+                            pushed = True
+                        except Exception as e:
+                            log.error("monitor key %s failed: %s", index, e)
+            if emit and self.on_monitor_image:
                 try:
                     self.on_monitor_image(index, img)
                 except Exception as e:

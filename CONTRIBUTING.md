@@ -3,8 +3,10 @@
 Thanks for helping improve **fifine Control Deck**!
 
 ## Development setup
-- Python 3.10+ with system **PyQt6** + **Pillow** (`python3-pyqt6 python3-pil`)
-  and **pyudev**.
+- Python 3.10+ with system **PyQt6**, **Pillow** and **psutil**
+  (`python3-pyqt6 python3-pil python3-psutil`) and **pyudev**. Without psutil
+  the system-monitor sampler tests skip silently — install it so the full
+  suite actually runs.
 - Install the udev rule so the device works without `sudo`, then replug (you
   must be in the `plugdev` group):
   ```bash

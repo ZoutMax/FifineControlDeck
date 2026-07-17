@@ -168,3 +168,37 @@ def test_install_sh_does_not_build_a_downgrade():
     assert "debian/changelog" in src, "version must come from the changelog"
     assert _build_deb_default_version() not in src.split("debian/changelog")[0], (
         "install.sh hardcodes build-deb.sh's placeholder version")
+
+
+# -- monitor keys: the psutil dependency must exist on EVERY install path ----
+
+def test_psutil_is_a_dependency_on_every_install_path():
+    """Monitor keys need psutil. Each packaging channel installs deps its own
+    way, so each one must name it — a miss ships monitors that render 'n/a'."""
+    assert "python3-psutil" in _read("debian/control")
+    assert "python3-psutil" in _read("packaging/build-deb.sh")
+    assert re.search(r"^\s*- psutil$", _read("snap/snapcraft.yaml"), re.M)
+    assert "psutil" in _read("flatpak/io.github.zoutmax.FifineControlDeck.yaml")
+    assert "psutil" in _read("docs/FLATPAK.md")
+    assert "python3-psutil" in _read("CONTRIBUTING.md")
+
+
+def test_ci_gates_install_psutil():
+    """Without psutil in the CI pip install, every real-sampler test skips
+    silently and the gate goes green while sampling is untested."""
+    for wf in ("python-package.yml", "release.yml"):
+        src = _read(os.path.join(".github", "workflows", wf))
+        pip_lines = [ln for ln in src.splitlines() if "pip install" in ln
+                     and "PyQt6" in ln]
+        assert pip_lines, wf
+        assert all("psutil" in ln for ln in pip_lines), (
+            f"{wf} pip install line is missing psutil")
+
+
+def test_nvml_vram_support_is_actually_installable():
+    """README/CHANGELOG advertise NVIDIA VRAM via NVML; pynvml must therefore
+    be at least recommended (deb) / bundled (snap) and documented."""
+    assert "python3-pynvml" in _read("debian/control")
+    assert "python3-pynvml" in _read("packaging/build-deb.sh")
+    assert re.search(r"^\s*- pynvml$", _read("snap/snapcraft.yaml"), re.M)
+    assert "pynvml" in _read("README.md")

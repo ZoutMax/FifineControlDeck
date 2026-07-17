@@ -21,7 +21,7 @@ wheel with a URL + sha256. Generate it:
 ```bash
 pip install requirements-parser  # once
 curl -O https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/pip/flatpak-pip-generator
-python3 flatpak-pip-generator PyQt6 Pillow pyudev
+python3 flatpak-pip-generator PyQt6 Pillow psutil pyudev
 # -> produces python3-modules.json; reference it from the manifest and drop the
 #    inline `pip3 install` build-command.
 ```
