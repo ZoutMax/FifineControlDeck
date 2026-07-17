@@ -1,4 +1,5 @@
 # Fifine Control Deck — Linux
+https://fifinemicrophone.com/pages/download-fifine-d6-software
 
 A native Linux control application for the **fifine Control Deck** (a Mirabox /
 Hotspot "Stream Dock" style macro keypad with per-key LCDs, USB id
