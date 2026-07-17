@@ -163,6 +163,15 @@ class KeyButton(QToolButton):
         self._press_pos: QPoint | None = None
 
     def update_preview(self, kc: KeyConfig):
+        if kc.action.type == "monitor":
+            # Placeholder frame; live frames stream in via the controller's
+            # on_monitor_image callback and replace it within a tick.
+            from .. import monitors
+            spec = monitors.MonitorSpec.from_params(kc.action.params)
+            img = monitors.render_monitor(self._size, spec, monitors.placeholder(spec),
+                                          [], kc.bg_color, kc.text_color)
+            self.setIcon(QIcon(QPixmap.fromImage(rendering.pil_to_qimage(img))))
+            return
         icon = kc.icon
         if icon.lower().endswith(".gif"):
             # show first frame for the preview

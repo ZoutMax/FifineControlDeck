@@ -19,8 +19,8 @@ from typing import Callable, Optional
 import os
 import queue
 
-from . import actions, rendering
-from .device import FifineDeck, register
+from . import actions, monitors, rendering
+from .device import DEVICE_PROFILE, FifineDeck, register
 from .model import DeckConfig, Profile, Page, KeyConfig
 
 from StreamDock.DeviceManager import DeviceManager
@@ -49,11 +49,21 @@ class DeckController:
         self._action_thread = threading.Thread(target=self._action_worker, daemon=True)
         self._action_thread.start()
 
+        # Monitor keys are sampled + repainted on their own thread, so a slow
+        # metric read (a stalling disk, a sick GPU driver) can never delay
+        # actions or the SDK reader.
+        self._sampler = monitors.Sampler()
+        self._monitor_state: dict[int, tuple] = {}  # key index -> (last_t, signature)
+        self._monitor_stop = threading.Event()
+        self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self._monitor_thread.start()
+
         # observer callbacks (optional)
         self.on_connect: Optional[Callable[[FifineDeck], None]] = None
         self.on_disconnect: Optional[Callable[[], None]] = None
         self.on_key_event: Optional[Callable[[int, bool], None]] = None
         self.on_page_changed: Optional[Callable[[], None]] = None
+        self.on_monitor_image: Optional[Callable[[int, object], None]] = None
 
         register()
 
@@ -149,6 +159,7 @@ class DeckController:
 
     def stop(self):
         self._running = False
+        self._monitor_stop.set()
         self._action_queue.put(None)   # unblock + end the action worker
         with self._lock:
             dev = self.device
@@ -222,7 +233,10 @@ class DeckController:
             if not dev:
                 return
             kc = self.page().keys.get(index, KeyConfig())
-            is_gif = kc.icon.lower().endswith(".gif") and os.path.exists(kc.icon)
+            # A monitor readout replaces the key face entirely, icon included.
+            is_monitor = kc.action.type == "monitor"
+            is_gif = (not is_monitor
+                      and kc.icon.lower().endswith(".gif") and os.path.exists(kc.icon))
             try:
                 if is_gif:
                     dev.set_key_gif(index, kc.icon)
@@ -231,8 +245,17 @@ class DeckController:
                     if index in self._gif_keys:
                         dev.clear_key_gif(index)
                         self._gif_keys.discard(index)
-                    img = rendering.render_key(
-                        dev.KEY_PIXEL_WIDTH, kc.label, kc.icon, kc.bg_color, kc.text_color)
+                    if is_monitor:
+                        spec = monitors.MonitorSpec.from_params(kc.action.params)
+                        img = monitors.render_monitor(
+                            dev.KEY_PIXEL_WIDTH, spec, self._sampler.last(spec),
+                            self._sampler.history(spec), kc.bg_color, kc.text_color)
+                        # force a fresh sample on the next tick so the cached
+                        # value we just painted goes live quickly
+                        self._monitor_state.pop(index, None)
+                    else:
+                        img = rendering.render_key(
+                            dev.KEY_PIXEL_WIDTH, kc.label, kc.icon, kc.bg_color, kc.text_color)
                     dev.set_key_image_pil(index, img)
                 self._sync_gif_loop()
             except Exception as e:
@@ -272,6 +295,69 @@ class DeckController:
         if self.on_page_changed:
             self.on_page_changed()
 
+    # -- monitor keys ------------------------------------------------------
+    def _monitor_loop(self):
+        # 0.5 s scheduler granularity. With no monitor keys on the visible
+        # page a tick is a single dict scan — no metric is ever sampled.
+        while not self._monitor_stop.wait(0.5):
+            try:
+                self.monitor_tick()
+            except Exception as e:      # a tick must never kill the thread
+                log.error("monitor tick failed: %s", e)
+
+    def monitor_tick(self, now: float | None = None) -> None:
+        """Sample and repaint the monitor keys of the visible page that are
+        due per their refresh interval. Runs on the monitor thread; callable
+        directly with a fake clock in tests."""
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            page = self.page()
+            dev = self.device
+            size = dev.KEY_PIXEL_WIDTH if dev else int(DEVICE_PROFILE["key_size"])
+            entries = [(i, kc) for i, kc in list(page.keys.items())
+                       if kc.action.type == "monitor"]
+        if not entries:
+            if self._monitor_state:
+                self._monitor_state.clear()
+            return
+        live = {i for i, _ in entries}
+        pushed = False
+        for index, kc in entries:
+            spec = monitors.MonitorSpec.from_params(kc.action.params)
+            last_t, last_sig = self._monitor_state.get(index, (0.0, None))
+            if now - last_t < spec.interval:
+                continue
+            reading = self._sampler.sample(spec)
+            # Only repaint when something visible changed (graphs always move).
+            sig = (spec, kc.bg_color, kc.text_color, reading.text, reading.sub,
+                   None if reading.pct is None else int(reading.pct))
+            self._monitor_state[index] = (now, sig)
+            if sig == last_sig and spec.style != "graph":
+                continue
+            img = monitors.render_monitor(size, spec, reading,
+                                          self._sampler.history(spec),
+                                          kc.bg_color, kc.text_color)
+            with self._lock:
+                dev = self.device
+                # `page` may have been navigated away from while sampling —
+                # never paint another page's key slot.
+                if dev and self.page() is page and index not in self._gif_keys:
+                    try:
+                        dev.set_key_image_pil(index, img)
+                        pushed = True
+                    except Exception as e:
+                        log.error("monitor key %s failed: %s", index, e)
+            if self.on_monitor_image:
+                try:
+                    self.on_monitor_image(index, img)
+                except Exception as e:
+                    log.error("monitor image callback failed: %s", e)
+        # forget keys that stopped being monitors (cleared / retyped / swapped)
+        for stale in set(self._monitor_state) - live:
+            self._monitor_state.pop(stale, None)
+        if pushed:
+            self.refresh()
+
     # -- input dispatch ----------------------------------------------------
     def _enqueue(self, task):
         """Queue a 0-arg callable to run on the worker thread."""
@@ -307,6 +393,10 @@ class DeckController:
             if not dev or index in self._gif_keys:
                 return
             kc = self.page().keys.get(index, KeyConfig())
+            if kc.action.type == "monitor":
+                # a static flash frame would overpaint the live readout until
+                # the next tick; monitor keys don't react to presses anyway
+                return
             try:
                 img = rendering.render_key(
                     dev.KEY_PIXEL_WIDTH, kc.label, kc.icon, kc.bg_color,

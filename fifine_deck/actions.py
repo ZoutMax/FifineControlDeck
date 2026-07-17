@@ -128,6 +128,12 @@ ACTION_TYPES: dict[str, dict] = {
     "prev_profile":  {"label": "Previous profile", "params": []},
     "brightness":    {"label": "Brightness", "params": [("mode", "choice:set,up,down", "Mode"), ("value", "text", "Value / step")]},
     "sleep_screen":  {"label": "Sleep screen", "params": []},
+    "monitor":       {"label": "System monitor", "params": [
+        ("metric", "choice:cpu,ram,vram,net,disk", "Metric"),
+        ("style", "choice:number,gauge,graph", "Style"),
+        ("interval", "text", "Refresh every (seconds)"),
+        ("target", "text", "Disk mount / net interface"),
+    ]},
     "open_folder":   {"label": "Open folder", "params": []},
     "folder_back":   {"label": "Back (exit folder)", "params": []},
     "multi":         {"label": "Multi-action (steps)", "params": []},  # edited specially
@@ -139,6 +145,7 @@ ACTION_CATALOG = [
     ("Application", ["launch_app", "run_command", "open_url", "close_app"]),
     ("Keyboard",    ["hotkey", "text", "password"]),
     ("Media",       ["media", "volume"]),
+    ("System",      ["monitor"]),
     ("Deck",        ["next_page", "prev_page", "goto_page", "switch_profile",
                      "next_profile", "prev_profile", "brightness", "sleep_screen"]),
     ("Folders",     ["open_folder", "folder_back"]),
@@ -164,6 +171,9 @@ ACTION_DEFAULT_ICON = {
     "prev_profile": ("prev_page", "Scene ◀"),
     "brightness": ("brightness_up", "Bright"),
     "sleep_screen": ("dot", "Sleep"),
+    # monitor: no icon/label on purpose — the live readout IS the key face,
+    # and a library icon would overpaint it between ticks.
+    "monitor": ("", ""),
     "open_folder": ("folder", "Folder"),
     "folder_back": ("prev_page", "Back"),
     "multi": ("star", "Multi"),
@@ -392,6 +402,8 @@ def execute(action, context: ActionContext | None = None) -> None:
             _volume(p.get("cmd", "up"), p.get("step", "5"))
         elif t == "close_app":
             _close_app(p.get("target", ""))
+        elif t == "monitor":
+            return    # display-only key: pressing it does nothing
         elif t == "sleep_screen" and context:
             context.sleep_screen()
         elif t == "next_profile" and context:

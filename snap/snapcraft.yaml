@@ -42,6 +42,7 @@ parts:
       - Pillow
       - pyudev
       - keyring
+      - psutil
     stage-packages:
       - libudev1
       # Qt6 xcb platform plugin runtime deps (classic = no gnome platform snap)

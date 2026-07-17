@@ -30,6 +30,7 @@ class _Bridge(QObject):
     disconnected = pyqtSignal()
     keyEvent = pyqtSignal(int, bool)
     pageChanged = pyqtSignal()
+    monitorImage = pyqtSignal(int, object)   # (key index, PIL image)
 
 
 class MainWindow(QMainWindow):
@@ -52,10 +53,12 @@ class MainWindow(QMainWindow):
         self.bridge.disconnected.connect(self._on_disconnected)
         self.bridge.keyEvent.connect(self._on_key_event)
         self.bridge.pageChanged.connect(self._on_external_page_change)
+        self.bridge.monitorImage.connect(self._on_monitor_image)
         controller.on_connect = lambda dev: self.bridge.connected.emit()
         controller.on_disconnect = lambda: self.bridge.disconnected.emit()
         controller.on_key_event = lambda i, p: self.bridge.keyEvent.emit(i, p)
         controller.on_page_changed = lambda: self.bridge.pageChanged.emit()
+        controller.on_monitor_image = lambda i, img: self.bridge.monitorImage.emit(i, img)
 
         self._close_notified = False
         self._build_ui()
@@ -658,6 +661,15 @@ class MainWindow(QMainWindow):
         b = self.buttons.get(index)
         if b:
             b.flash(pressed)
+
+    def _on_monitor_image(self, index: int, img):
+        """Live monitor frame from the controller thread (via the bridge)."""
+        btn = self.buttons.get(index)
+        kc = self._page().keys.get(index)
+        # The frame may be stale (page switched, key cleared) — check intent.
+        if btn is None or kc is None or kc.action.type != "monitor":
+            return
+        btn.setIcon(QIcon(QPixmap.fromImage(rendering.pil_to_qimage(img))))
 
     def _on_external_page_change(self):
         # A key/knob action switched the page or profile on the controller.

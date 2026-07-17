@@ -60,6 +60,11 @@ The core is feature-complete and hardened, but it's early. Realistic expectation
   switch profile, next/previous profile (Scene Shift), and multi-step actions.
   Key actions run on a worker thread, so a slow/delayed macro never blocks the
   keypad.
+- **System-monitor keys** — a key can show live **CPU, RAM, VRAM, network or
+  disk-space** readouts (like the official app's widgets), as a big number, a
+  gauge, or a scrolling graph, with a configurable refresh interval. VRAM is
+  best-effort per GPU vendor (NVIDIA via NVML, AMD via sysfs; Intel iGPUs
+  share system RAM so there is nothing to show).
 - **Knob/dial support** (press / rotate-left / rotate-right) on devices that
   have dials.
 - Multiple **profiles**, each with multiple **pages**, plus **folders** —
@@ -75,7 +80,8 @@ The core is feature-complete and hardened, but it's early. Realistic expectation
 Already present on most desktops / this machine:
 
 - Python 3.10+
-- **PyQt6** and **Pillow** (system packages: `python3-pyqt6`, `python3-pil`)
+- **PyQt6**, **Pillow** and **psutil** (system packages: `python3-pyqt6`,
+  `python3-pil`, `python3-psutil`)
 
 Optional, for specific actions (install what you use):
 

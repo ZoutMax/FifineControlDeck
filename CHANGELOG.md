@@ -4,6 +4,18 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+### Added
+- **System-monitor keys** (#2): a new *System monitor* action turns a key into
+  a live readout of **CPU, RAM, VRAM, network rate, or disk space**, styled as
+  a big number, a 270° gauge, or a scrolling graph, refreshed at a per-key
+  interval (0.5–60 s). Only keys whose displayed value changed are re-pushed to
+  the device, and with no monitor keys on the visible page nothing is ever
+  sampled. VRAM is detected per vendor (NVIDIA NVML, AMD sysfs; unavailable on
+  shared-memory iGPUs). Pressing a monitor key does nothing, and press-flash
+  skips it so the readout is never overpainted. New dependency:
+  `python3-psutil`.
+
 ## [0.5.8] - 2026-07-17
 ### Fixed
 - **Device access for users not in `plugdev`.** The udev rule was numbered
