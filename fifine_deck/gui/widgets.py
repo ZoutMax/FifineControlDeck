@@ -315,6 +315,14 @@ class ActionParamsWidget(QWidget):
     def set_action(self, action: Action):
         self._building = True
         i = self.type_combo.findData(action.type)
+        if i < 0 and action.type in ACTION_TYPES:
+            # A persisted action whose type this editor normally excludes
+            # (e.g. a monitor bound to a knob/step before the exclusion
+            # existed). Show it rather than falling back to index 0 — that
+            # fallback silently rewrote the stored action to the combo's
+            # first entry on the next unrelated edit.
+            self.type_combo.addItem(ACTION_TYPES[action.type]["label"], action.type)
+            i = self.type_combo.findData(action.type)
         self.type_combo.setCurrentIndex(max(0, i))
         self._build(action.type, action.params)
         self._building = False

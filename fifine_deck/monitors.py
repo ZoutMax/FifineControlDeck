@@ -17,6 +17,7 @@ from __future__ import annotations
 import glob
 import logging
 import os
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -129,7 +130,10 @@ class Sampler:
         self._last: dict[tuple, Reading] = {}
         self._net_prev: dict[str, tuple[float, int, int]] = {}
         self._vram_backend = None      # probed lazily; ("none",) when absent
-        self._cpu_primed = False       # psutil's first cpu_percent is garbage
+        # psutil keys its cpu_percent since-last-call baseline PER THREAD, so
+        # priming must be per thread too — a flag primed on one thread would
+        # let another thread's first (garbage) reading through as real.
+        self._cpu_primed_threads: set[int] = set()
 
     # -- public ------------------------------------------------------------
     def sample(self, spec: MonitorSpec) -> Reading:
@@ -159,11 +163,12 @@ class Sampler:
         if psutil is None:
             return _NO_PSUTIL
         pct = psutil.cpu_percent(interval=None)
-        if not self._cpu_primed:
+        tid = threading.get_ident()
+        if tid not in self._cpu_primed_threads:
             # psutil documents the first non-blocking cpu_percent() as a
             # meaningless 0.0 (no since-last-call window yet) — show a
             # warm-up frame instead of a fake 0%.
-            self._cpu_primed = True
+            self._cpu_primed_threads.add(tid)
             return Reading(None, "…", METRICS["cpu"])
         return Reading(pct, f"{pct:.0f}%", f"{os.cpu_count() or '?'} cores",
                        sample=pct)
@@ -208,17 +213,29 @@ class Sampler:
     def _sample_vram(self, spec: MonitorSpec) -> Reading:
         b = self._vram_backend
         if b is None:
-            b = self._vram_backend = _probe_vram()
-        if b[0] == "nvml":
-            info = b[1].nvmlDeviceGetMemoryInfo(b[2])
-            used, total = info.used, info.total
-        elif b[0] == "amdgpu":
-            with open(b[1]) as f:
-                used = int(f.read())
-            with open(b[2]) as f:
-                total = int(f.read())
-        else:
+            b = _probe_vram()
+            if b[0] != "retry":
+                # "retry" (NVML installed but not ready — driver still
+                # loading?) is deliberately NOT cached: probe again next
+                # sample instead of freezing on n/a forever.
+                self._vram_backend = b
+        if b[0] not in ("nvml", "amdgpu"):
             return Reading(None, "n/a", "no dedicated GPU", ok=False)
+        try:
+            if b[0] == "nvml":
+                info = b[1].nvmlDeviceGetMemoryInfo(b[2])
+                used, total = info.used, info.total
+            else:
+                with open(b[1]) as f:
+                    used = int(f.read())
+                with open(b[2]) as f:
+                    total = int(f.read())
+        except Exception:
+            # The backend died under us (driver unload, GPU hot-remove):
+            # drop the cache so the next sample re-probes instead of
+            # warning every interval forever.
+            self._vram_backend = None
+            raise
         pct = 100.0 * used / total if total else 0.0
         return Reading(pct, f"{pct:.0f}%",
                        f"{_fmt_bytes(used)} / {_fmt_bytes(total)}", sample=pct)
@@ -228,24 +245,27 @@ _NO_PSUTIL = Reading(None, "n/a", "psutil missing", ok=False)
 
 
 def _probe_vram():
-    """Find a VRAM source once: NVIDIA via NVML, AMD via sysfs, else none.
-    Intel iGPUs share system RAM — there is nothing meaningful to report."""
+    """Find a VRAM source: NVIDIA via NVML, AMD via sysfs, else none.
+    Intel iGPUs share system RAM — there is nothing meaningful to report.
+    Returns ("retry",) when NVML is installed but not ready (e.g. the driver
+    is still loading) — the caller re-probes on the next sample instead of
+    caching a permanent failure."""
+    pynvml = None
     try:
         import pynvml
-        pynvml.nvmlInit()
-        return ("nvml", pynvml, pynvml.nvmlDeviceGetHandleByIndex(0))
-    except Exception:
+    except ImportError:
         pass
+    if pynvml is not None:
+        try:
+            pynvml.nvmlInit()
+            return ("nvml", pynvml, pynvml.nvmlDeviceGetHandleByIndex(0))
+        except Exception:
+            return ("retry",)
     for total in sorted(glob.glob("/sys/class/drm/card*/device/mem_info_vram_total")):
         used = os.path.join(os.path.dirname(total), "mem_info_vram_used")
         if os.path.exists(used):
             return ("amdgpu", used, total)
     return ("none",)
-
-
-def vram_available() -> bool:
-    """True when a VRAM source exists (used to grey the option in docs/UI)."""
-    return _probe_vram()[0] != "none"
 
 
 # ---------------------------------------------------------------------------

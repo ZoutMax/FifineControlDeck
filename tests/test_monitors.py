@@ -483,3 +483,154 @@ def test_monitor_callback_receives_frames_and_survives_errors():
         assert got == [1, 1]
     finally:
         c.stop()
+
+
+# ---------------------------------------------------------------------------
+# Release-audit regressions (pre-0.6.0 audit round)
+# ---------------------------------------------------------------------------
+import threading                                            # noqa: E402
+
+
+class _FlakyDevice(MockDevice):
+    """MockDevice whose next N image writes fail (transient USB hiccup)."""
+
+    def __init__(self):
+        super().__init__()
+        self.fail_next = 0
+
+    def set_key_image_pil(self, index, img):
+        if self.fail_next > 0:
+            self.fail_next -= 1
+            raise IOError("transient write failure")
+        super().set_key_image_pil(index, img)
+
+
+def test_monitor_spec_edited_mid_tick_is_not_overpainted():
+    """The GUI mutates KeyConfig IN PLACE, so identity checks alone let a
+    stale frame overpaint a key whose metric was just changed — and its gate
+    then suppressed the new spec for a full interval (audit finding)."""
+    c, dev = _monitored_controller([])
+    def edit():
+        c.page().keys[1].action = Action("monitor",
+                                         {"metric": "ram", "style": "number"})
+    c._sampler = _HookedSampler([Reading(37.0, "37%")], edit)
+    try:
+        c.monitor_tick(now=100.0)
+        assert dev.key_images == {}          # stale cpu frame must not paint
+        assert 1 not in c._monitor_state     # and must not gate the new spec
+        c._sampler = _ScriptedSampler([Reading(62.0, "62%")])
+        c.monitor_tick(now=100.5)            # next tick serves the NEW spec
+        assert 1 in dev.key_images
+    finally:
+        c.stop()
+
+
+def test_failed_write_is_retried_even_with_a_stable_value():
+    """A failed device write used to be stamped as painted; the unchanged-sig
+    fast path then suppressed every retry while the value was stable — the
+    key face stayed stale forever (audit finding). The GUI must not receive
+    the frame either, or preview and device silently diverge."""
+    cfg = DeckConfig()
+    cfg.active_profile().pages[0].key(1).action = Action("monitor",
+                                                         {"metric": "cpu"})
+    c = DeckController(cfg)
+    _quiesce(c)
+    dev = _FlakyDevice()
+    assert c._setup_device(dev)
+    c._sampler = _ScriptedSampler([Reading(42.0, "42%")])
+    c._monitor_state.clear()
+    dev.key_images.clear()
+    got = []
+    c.on_monitor_image = lambda i, img: got.append(i)
+    dev.fail_next = 1
+    try:
+        c.monitor_tick(now=100.0)
+        assert dev.key_images == {} and got == []     # failed + no GUI frame
+        assert 1 not in c._monitor_state              # no gate left behind
+        c.monitor_tick(now=100.5)                     # same stable value
+        assert 1 in dev.key_images and got == [1]     # retried successfully
+    finally:
+        c.stop()
+
+
+def test_one_bad_key_does_not_block_the_others(monkeypatch):
+    cfg = DeckConfig()
+    page = cfg.active_profile().pages[0]
+    page.key(1).action = Action("monitor", {"metric": "cpu"})
+    page.key(2).action = Action("monitor", {"metric": "ram"})
+    c = DeckController(cfg)
+    _quiesce(c)
+    dev = MockDevice()
+    assert c._setup_device(dev)
+    c._sampler = _ScriptedSampler([Reading(10.0, "10%"), Reading(20.0, "20%")])
+    c._monitor_state.clear()
+    dev.key_images.clear()
+    dev.refreshes = 0
+    real = monitors.render_monitor
+    def flaky(size, spec, reading, history=None,
+              bg_color="#101020", text_color="#ffffff"):
+        if spec.metric == "cpu":
+            raise RuntimeError("boom")
+        return real(size, spec, reading, history, bg_color, text_color)
+    monkeypatch.setattr(monitors, "render_monitor", flaky)
+    try:
+        c.monitor_tick(now=100.0)
+        assert 2 in dev.key_images and 1 not in dev.key_images
+        assert dev.refreshes == 1            # final refresh still ran
+    finally:
+        c.stop()
+
+
+def test_editor_preserves_persisted_excluded_action_type(qapp):
+    """A stored action whose type the editor excludes (old monitor knob/step
+    bindings) used to snap to the combo's first entry and get silently
+    rewritten on the next unrelated edit (audit finding)."""
+    from fifine_deck.gui.widgets import ActionParamsWidget
+    w = ActionParamsWidget(exclude={"monitor"})
+    w.set_action(Action("monitor", {"metric": "cpu", "style": "gauge"}))
+    a = w.get_action()
+    assert a.type == "monitor"
+    assert a.params.get("metric") == "cpu"
+
+
+def test_cpu_priming_is_per_thread():
+    """psutil keys its cpu_percent baseline per thread; a process-wide primed
+    flag would let another thread's first (garbage) reading through as real."""
+    pytest.importorskip("psutil")
+    s = Sampler()
+    spec = MonitorSpec.from_params({"metric": "cpu"})
+    assert s.sample(spec).pct is None            # this thread's warm-up
+    assert s.sample(spec).pct is not None
+    result = {}
+    t = threading.Thread(target=lambda: result.update(first=s.sample(spec)))
+    t.start()
+    t.join()
+    assert result["first"].pct is None           # new thread warms up separately
+
+
+def test_vram_backend_reprobes_after_backend_death(tmp_path, monkeypatch):
+    used, total = tmp_path / "u", tmp_path / "t"
+    used.write_text("1000")
+    total.write_text("4000")
+    s = Sampler()
+    monkeypatch.setattr(monitors, "_probe_vram",
+                        lambda: ("amdgpu", str(used), str(total)))
+    spec = MonitorSpec.from_params({"metric": "vram"})
+    assert s.sample(spec).pct == pytest.approx(25.0)
+    used.unlink()
+    total.unlink()                               # GPU "hot-removed"
+    assert not s.sample(spec).ok                 # degrades, doesn't crash
+    assert s._vram_backend is None               # cache dropped -> re-probe
+    monkeypatch.setattr(monitors, "_probe_vram", lambda: ("none",))
+    assert not s.sample(spec).ok
+    assert s._vram_backend == ("none",)          # quiet steady-state, no spam
+
+
+def test_vram_retry_probe_is_not_cached(monkeypatch):
+    """NVML installed but not ready (driver loading) must not freeze VRAM on
+    n/a forever — the probe is retried on the next sample."""
+    s = Sampler()
+    monkeypatch.setattr(monitors, "_probe_vram", lambda: ("retry",))
+    spec = MonitorSpec.from_params({"metric": "vram"})
+    assert not s.sample(spec).ok
+    assert s._vram_backend is None

@@ -202,3 +202,20 @@ def test_nvml_vram_support_is_actually_installable():
     assert "python3-pynvml" in _read("packaging/build-deb.sh")
     assert re.search(r"^\s*- pynvml$", _read("snap/snapcraft.yaml"), re.M)
     assert "pynvml" in _read("README.md")
+
+
+# -- release.sh safety gates (pre-0.6.0 audit round) -------------------------
+
+def test_release_sh_gates_on_and_stages_the_changelog():
+    """A tag whose CHANGELOG lacks the version section fails its own release
+    CI — after being pushed. release.sh must check first and commit the file."""
+    src = _read("release.sh")
+    assert "CHANGELOG.md has no" in src, "missing pre-flight CHANGELOG check"
+    assert "snap/snapcraft.yaml debian/changelog CHANGELOG.md" in src, (
+        "CHANGELOG.md is not staged with the release commit")
+
+
+def test_release_sh_refuses_a_tag_pointing_elsewhere():
+    src = _read("release.sh")
+    assert "points at a different commit" in src, (
+        "release.sh silently reuses stale tags")

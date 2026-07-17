@@ -62,7 +62,8 @@ The core is feature-complete and hardened, but it's early. Realistic expectation
   keypad.
 - **System-monitor keys** — a key can show live **CPU, RAM, VRAM, network or
   disk-space** readouts (like the official app's widgets), as a big number, a
-  gauge, or a scrolling graph, with a configurable refresh interval. Keys
+  gauge (percentage metrics; a network key falls back to the number face), or
+  a scrolling graph, with a configurable refresh interval. Keys
   showing the same metric share one sample stream. VRAM is best-effort per GPU
   vendor (NVIDIA via NVML — needs `python3-pynvml`; AMD via sysfs; Intel iGPUs
   share system RAM so there is nothing to show).

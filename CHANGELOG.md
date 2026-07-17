@@ -8,10 +8,13 @@ follows [Semantic Versioning](https://semver.org/).
 ### Added
 - **System-monitor keys** (#2): a new *System monitor* action turns a key into
   a live readout of **CPU, RAM, VRAM, network rate, or disk space**, styled as
-  a big number, a 270° gauge, or a scrolling graph, refreshed at a per-key
-  interval (0.5–60 s). Only keys whose displayed value changed are re-pushed to
-  the device, and with no monitor keys on the visible page nothing is ever
-  sampled. VRAM is detected per vendor (NVIDIA NVML, AMD sysfs; unavailable on
+  a big number, a 270° gauge (percentage metrics — a network key falls back to
+  the number face), or a scrolling graph, refreshed at a per-key interval
+  (0.5–60 s). Number/gauge keys are re-pushed to the device only when their
+  displayed value changes (graphs advance every interval), keys showing the
+  same metric share one sample stream, and with no monitor keys on the visible
+  page nothing is ever sampled. VRAM is detected per vendor (NVIDIA via NVML —
+  install the recommended `python3-pynvml`; AMD via sysfs; unavailable on
   shared-memory iGPUs). Pressing a monitor key does nothing, and press-flash
   skips it so the readout is never overpainted. New dependency:
   `python3-psutil`.

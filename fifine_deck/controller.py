@@ -344,41 +344,73 @@ class DeckController:
                 readings[spec.key()] = self._sampler.sample(spec)
         pushed = False
         for index, kc, spec in due:
-            reading = readings[spec.key()]
-            # Only repaint when something visible changed (graphs always move).
-            sig = (spec, kc.bg_color, kc.text_color, reading.text, reading.sub,
-                   None if reading.pct is None else int(reading.pct))
-            last_sig = self._monitor_state.get(index, (None, None))[1]
-            if sig == last_sig and spec.style != "graph":
-                self._monitor_state[index] = (now, sig)
-                continue
-            img = monitors.render_monitor(size, spec, reading,
-                                          self._sampler.history(spec),
-                                          kc.bg_color, kc.text_color)
-            emit = False
-            with self._lock:
-                dev = self.device
-                cur = self.page().keys.get(index)
-                # The page may have switched, or the key been retyped/cleared/
-                # swapped, while we sampled outside the lock. Never paint (or
-                # emit, or stamp state for) a stale frame — the state entry
-                # would suppress the NEW key's first repaint for a full
-                # interval, and the frame would show the wrong metric.
-                if (self.page() is page and cur is kc
-                        and cur.action.type == "monitor"):
-                    self._monitor_state[index] = (now, sig)
-                    emit = True
-                    if dev and index not in self._gif_keys:
-                        try:
-                            dev.set_key_image_pil(index, img)
-                            pushed = True
-                        except Exception as e:
-                            log.error("monitor key %s failed: %s", index, e)
-            if emit and self.on_monitor_image:
-                try:
-                    self.on_monitor_image(index, img)
-                except Exception as e:
-                    log.error("monitor image callback failed: %s", e)
+            try:
+                reading = readings[spec.key()]
+                # Capture the exact render inputs up front: the GUI mutates
+                # KeyConfig objects IN PLACE, so kc's colors and params can
+                # change under us at any point of this unlocked section.
+                bg, fg = kc.bg_color, kc.text_color
+                # Only repaint when something visible changed (graphs always move).
+                sig = (spec, bg, fg, reading.text, reading.sub,
+                       None if reading.pct is None else int(reading.pct))
+                last_sig = self._monitor_state.get(index, (None, None))[1]
+                if sig == last_sig and spec.style != "graph":
+                    with self._lock:
+                        # Refresh the timestamp only if the gate we compared
+                        # against is still in place — a clear (render_page) or
+                        # pop (render_key after an edit) that landed since must
+                        # not be resurrected, or the new context waits a full
+                        # interval behind a stale gate.
+                        if self._monitor_state.get(index, (None, None))[1] == last_sig:
+                            self._monitor_state[index] = (now, sig)
+                    continue
+                img = monitors.render_monitor(size, spec, reading,
+                                              self._sampler.history(spec), bg, fg)
+                emit = False
+                with self._lock:
+                    dev = self.device
+                    cur = self.page().keys.get(index)
+                    # Re-validate against the CURRENT config. Object identity
+                    # alone proves nothing — the GUI edits the same KeyConfig
+                    # in place, so a monitor key retuned to another metric/
+                    # style/color mid-tick still passes `cur is kc`. Compare
+                    # what we actually rendered with what the key wants NOW.
+                    valid = (self.page() is page and cur is kc
+                             and cur.action.type == "monitor"
+                             and monitors.MonitorSpec.from_params(cur.action.params) == spec
+                             and cur.bg_color == bg and cur.text_color == fg)
+                    if valid:
+                        ok = True
+                        if dev and index not in self._gif_keys:
+                            try:
+                                dev.set_key_image_pil(index, img)
+                                pushed = True
+                            except Exception as e:
+                                ok = False
+                                log.error("monitor key %s failed: %s", index, e)
+                        if ok:
+                            # Stamp only AFTER the write succeeded (or no
+                            # device to write to): stamping first would let
+                            # the unchanged-sig fast path suppress every
+                            # retry of a failed write while the value is
+                            # stable — a stale key face forever.
+                            self._monitor_state[index] = (now, sig)
+                            emit = True
+                        else:
+                            # Failed write: leave no gate, so the very next
+                            # tick resamples and retries. The GUI gets no
+                            # frame either — preview and device must not
+                            # silently diverge.
+                            self._monitor_state.pop(index, None)
+                if emit and self.on_monitor_image:
+                    try:
+                        self.on_monitor_image(index, img)
+                    except Exception as e:
+                        log.error("monitor image callback failed: %s", e)
+            except Exception as e:
+                # One bad key must not freeze the other monitor keys or
+                # starve the final refresh().
+                log.error("monitor key %s tick failed: %s", index, e)
         # forget keys that stopped being monitors (cleared / retyped / swapped)
         for stale in set(self._monitor_state) - live:
             self._monitor_state.pop(stale, None)

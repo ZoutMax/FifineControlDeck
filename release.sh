@@ -19,6 +19,14 @@ cd "$REPO"
 # repo identity (keeps GitHub contributions credited to ZoutMax, no co-author)
 GIT_ID=(-c user.name='ZoutMax' -c user.email='150600436+ZoutMax@users.noreply.github.com')
 
+# CHANGELOG.md must already document this release: tests/test_packaging.py
+# gates on it, so a tag without the section fails its own release CI — after
+# it is already pushed. Fail here instead, before anything is mutated.
+grep -q "^## \[$VERSION\]" CHANGELOG.md || {
+  echo "FATAL: CHANGELOG.md has no '## [$VERSION]' section — write it first." >&2
+  exit 1
+}
+
 echo ">> bumping version to $VERSION"
 sed -i -E "s/^version: .*/version: '$VERSION'/" snap/snapcraft.yaml
 
@@ -52,12 +60,23 @@ PYEOF
 command -v appstreamcli >/dev/null && appstreamcli validate packaging/*.metainfo.xml flatpak/*.metainfo.xml
 
 echo ">> committing + tagging v$VERSION"
-git add snap/snapcraft.yaml debian/changelog \
+git add snap/snapcraft.yaml debian/changelog CHANGELOG.md \
         packaging/*.metainfo.xml flatpak/*.metainfo.xml
 git "${GIT_ID[@]}" commit -m "release: v$VERSION
 
 $MSG"
-git tag -a "v$VERSION" -m "v$VERSION" 2>/dev/null || { echo "tag v$VERSION exists; reusing"; }
+# Never silently reuse a tag that points elsewhere: pushing it would publish
+# a release whose tag names the wrong commit (classic failed-re-release trap).
+if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null 2>&1; then
+  if [ "$(git rev-parse "v$VERSION^{commit}")" != "$(git rev-parse HEAD)" ]; then
+    echo "FATAL: tag v$VERSION exists and points at a different commit." >&2
+    echo "If you intend to re-release: git tag -d v$VERSION && git push origin :refs/tags/v$VERSION" >&2
+    exit 1
+  fi
+  echo "tag v$VERSION already points at HEAD; reusing"
+else
+  git tag -a "v$VERSION" -m "v$VERSION"
+fi
 
 echo ">> pushing to GitHub (origin) + Launchpad (launchpad)"
 git push origin main --tags
