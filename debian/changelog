@@ -1,3 +1,9 @@
+fifine-control-deck (0.6.0ppa1) resolute; urgency=medium
+
+  * PPA build of 0.6.0 for resolute
+
+ -- ZoutMax <150600436+ZoutMax@users.noreply.github.com>  Fri, 17 Jul 2026 23:27:28 +0200
+
 fifine-control-deck (0.6.0) noble; urgency=medium
 
   * System monitor keys: live CPU, RAM, VRAM, network and disk readouts
