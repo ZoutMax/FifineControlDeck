@@ -1,6 +1,10 @@
 #!/bin/sh
 set -e
 
+# Drop the old no-op rule if a previous manual/snap-helper install left one:
+# at 99- its TAG+="uaccess" never fired (73-seat-late.rules dispatches at 73).
+rm -f /etc/udev/rules.d/99-fifine-deck.rules
+
 if command -v udevadm >/dev/null 2>&1; then
     udevadm control --reload-rules || true
     udevadm trigger || true
