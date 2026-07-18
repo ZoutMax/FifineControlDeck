@@ -304,7 +304,13 @@ def _type_text(text: str) -> None:
     password" action takes, and argv is world-readable through
     /proc/<pid>/cmdline — putting the secret there would undo everything
     secret_store.py does to keep it off disk. All three helpers support it:
-    xdotool and ydotool via `--file -`, wtype via a bare `-`.
+    xdotool via `--file -`, wtype via a bare `-`, ydotool via
+    `--file /dev/stdin`.
+
+    ydotool gets /dev/stdin rather than "-": 1.0.x treats "-" as stdin, but
+    legacy 0.1.8 (jammy, still a supported .deb target) fopen()s a literal
+    file named "-" and silently types nothing. /dev/stdin works with every
+    implementation that opens the argument as a path.
 
     Reading from stdin also disables ydotool's escape handling, so text is
     typed literally (`\\n` stays two characters); a real newline still presses
@@ -318,7 +324,9 @@ def _type_text(text: str) -> None:
     elif KEY_TOOL == "wtype":
         _run(["wtype", "-"], input_text=data)
     elif KEY_TOOL == "ydotool":
-        _run(["ydotool", "type", "--file", "-"], input_text=data)
+        # /dev/stdin, not "-": see the docstring — legacy ydotool 0.1.8
+        # fopen()s a literal "-" and silently types nothing.
+        _run(["ydotool", "type", "--file", "/dev/stdin"], input_text=data)
 
 
 def _close_app(target: str) -> None:

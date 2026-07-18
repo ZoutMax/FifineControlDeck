@@ -138,7 +138,9 @@ def test_hotkey_wtype_maps_super_to_logo(ran, monkeypatch):
 @pytest.mark.parametrize("tool, expected_argv", [
     ("xdotool", ["xdotool", "type", "--clearmodifiers", "--file", "-"]),
     ("wtype", ["wtype", "-"]),
-    ("ydotool", ["ydotool", "type", "--file", "-"]),
+    # /dev/stdin, not "-": legacy ydotool 0.1.8 (jammy) fopen()s a literal
+    # "-" and silently types nothing; /dev/stdin works everywhere.
+    ("ydotool", ["ydotool", "type", "--file", "/dev/stdin"]),
 ])
 def test_type_text_feeds_the_text_on_stdin(ran_full, monkeypatch, tool, expected_argv):
     """Every backend must read the text from stdin. Text starting with '-' also
@@ -270,6 +272,6 @@ def test_run_failure_log_cannot_leak_the_stdin_payload(monkeypatch, caplog):
 
     monkeypatch.setattr(actions.subprocess, "run", boom)
     with caplog.at_level(logging.WARNING):
-        actions._run(["ydotool", "type", "--file", "-"], input_text=b"hunter2")
+        actions._run(["ydotool", "type", "--file", "/dev/stdin"], input_text=b"hunter2")
     assert caplog.text                      # it did log the failure…
     assert "hunter2" not in caplog.text     # …but the secret isn't in it
