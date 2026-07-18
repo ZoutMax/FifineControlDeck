@@ -11,7 +11,7 @@ Run AFTER installing the udev rule (so /dev/hidraw* is accessible):
 Push numbered tiles to hardware keys 1..36, then read input events for 40s.
 Press each physical key once (top-left to bottom-right) and note what prints.
 """
-import os, sys, time, io, ctypes
+import os, sys, time, io
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "fifine_deck", "backend"))
