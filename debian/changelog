@@ -1,3 +1,9 @@
+fifine-control-deck (0.8.0) noble; urgency=medium
+
+  * Press-and-hold key actions, one-click GPU temperature, clock formats
+
+ -- ZoutMax <150600436+ZoutMax@users.noreply.github.com>  Sun, 19 Jul 2026 01:12:06 +0200
+
 fifine-control-deck (0.7.0ppa1) resolute; urgency=medium
 
   * PPA build of 0.7.0 for resolute
