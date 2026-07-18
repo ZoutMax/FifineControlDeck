@@ -700,6 +700,17 @@ class ActionEditor(QWidget):
         self.params = ActionParamsWidget()
         self.params.changed.connect(self._on_edit)
         root.addWidget(self.params)
+
+        # Second action slot: fires after holding the key ~0.5 s. Excluded
+        # types: monitor is display-only, and open_folder is bound to the
+        # key's folder slot (long-press folder_back IS allowed — it makes a
+        # natural "hold to go back").
+        hold_title = QLabel("Hold action (long press)")
+        hold_title.setStyleSheet("font-weight: bold; margin-top: 6px;")
+        root.addWidget(hold_title)
+        self.hold_params = ActionParamsWidget(exclude={"monitor", "open_folder"})
+        self.hold_params.changed.connect(self._on_edit)
+        root.addWidget(self.hold_params)
         root.addStretch()
         self.setEnabled(False)
 
@@ -717,6 +728,7 @@ class ActionEditor(QWidget):
         self.bg_btn.set_color(kc.bg_color)
         self.fg_btn.set_color(kc.text_color)
         self.params.set_action(kc.action)
+        self.hold_params.set_action(kc.hold_action)
         # Baseline MUST come from the widgets, exactly like _on_edit reads it:
         # the editor materializes every field of the action type, so a stored
         # action with optional fields omitted (e.g. volume without "step")
@@ -750,6 +762,7 @@ class ActionEditor(QWidget):
         self._kc.bg_color = default.bg_color
         self._kc.text_color = default.text_color
         self._kc.action = Action()
+        self._kc.hold_action = Action()
         # The explicit Clear button IS intent to wipe the key, folder included.
         # Folders survive mere action-type changes as dormant state, but a
         # cleared key must not silently resurrect old pages when a folder is
@@ -797,6 +810,7 @@ class ActionEditor(QWidget):
         self._kc.bg_color = self.bg_btn.color()
         self._kc.text_color = self.fg_btn.color()
         self._kc.action = new_action
+        self._kc.hold_action = self.hold_params.get_action()
         self.changed.emit()
 
 

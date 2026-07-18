@@ -129,10 +129,12 @@ ACTION_TYPES: dict[str, dict] = {
     "brightness":    {"label": "Brightness", "params": [("mode", "choice:set,up,down", "Mode"), ("value", "text", "Value / step")]},
     "sleep_screen":  {"label": "Sleep screen", "params": []},
     "monitor":       {"label": "System monitor", "params": [
-        ("metric", "choice:cpu,ram,vram,gpu,temp,net,disk,clock", "Metric"),
+        ("metric", "choice:cpu,ram,vram,gpu,gputemp,temp,net,disk,clock", "Metric"),
         ("style", "choice:number,gauge,graph", "Style"),
         ("interval", "text", "Refresh every (seconds)"),
         ("target", "text", "Disk mount / net iface / temp sensor"),
+        ("clock_format", "choice:auto,24h,24h+seconds,12h,12h+seconds", "Clock format"),
+        ("clock_date", "choice:auto,iso,us,none", "Clock date"),
     ]},
     "open_folder":   {"label": "Open folder", "params": []},
     "folder_back":   {"label": "Back (exit folder)", "params": []},

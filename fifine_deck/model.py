@@ -64,6 +64,10 @@ class KeyConfig:
     bg_color: str = "#101020"
     text_color: str = "#ffffff"
     action: Action = field(default_factory=Action)
+    # Optional long-press action (fires after HOLD_THRESHOLD while the key is
+    # held; the primary action then fires only on a short press's release).
+    # type "none" == no hold action, and is omitted from the saved config.
+    hold_action: Action = field(default_factory=Action)
     folder: "Folder | None" = None   # set when action == "open_folder"
 
     def to_dict(self) -> dict:
@@ -74,6 +78,8 @@ class KeyConfig:
             "text_color": self.text_color,
             "action": self.action.to_dict(),
         }
+        if self.hold_action.type != "none":
+            d["hold_action"] = self.hold_action.to_dict()
         if self.folder is not None:
             d["folder"] = self.folder.to_dict()
         return d
@@ -87,12 +93,15 @@ class KeyConfig:
             bg_color=d.get("bg_color", "#101020"),
             text_color=d.get("text_color", "#ffffff"),
             action=Action.from_dict(d.get("action")),
+            hold_action=Action.from_dict(d.get("hold_action")),
             folder=Folder.from_dict(fdata) if fdata else None,
         )
 
     def is_empty(self) -> bool:
         return (not self.label and not self.icon
-                and self.action.type == "none" and self.folder is None)
+                and self.action.type == "none"
+                and self.hold_action.type == "none"
+                and self.folder is None)
 
 
 @dataclass

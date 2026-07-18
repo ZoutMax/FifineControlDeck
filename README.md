@@ -59,10 +59,12 @@ The core is feature-complete and hardened, but it's early. Realistic expectation
   control, volume up/down/mute, brightness, sleep screen, page next/prev/goto,
   switch profile, next/previous profile (Scene Shift), and multi-step actions.
   Key actions run on a worker thread, so a slow/delayed macro never blocks the
-  keypad.
+  keypad. Every key can also carry a **hold action** — a second action that
+  fires after long-pressing the key (~0.5 s).
 - **System-monitor keys** — a key can show live **CPU, RAM, VRAM, GPU load,
-  temperature, network or disk-space** readouts (like the official app's
-  widgets) — or a **clock** — as a big number, a gauge (a network key falls
+  GPU/CPU temperatures, network or disk-space** readouts (like the official
+  app's widgets) — or a **clock** (12h/24h, optional seconds and date) — as a
+  big number, a gauge (a network key falls
   back to the number face), or a scrolling graph, with a configurable refresh
   interval. Keys showing the same metric share one sample stream. Temperature
   keys pick the CPU package sensor by default; the target field selects any

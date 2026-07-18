@@ -211,7 +211,8 @@ def test_monitor_is_a_registered_action_type():
     keys = [k for _, kinds in ACTION_CATALOG for k in kinds]
     assert "monitor" in keys
     param_names = [p[0] for p in ACTION_TYPES["monitor"]["params"]]
-    assert param_names == ["metric", "style", "interval", "target"]
+    assert param_names == ["metric", "style", "interval", "target",
+                           "clock_format", "clock_date"]
 
 
 def test_pressing_a_monitor_key_is_a_noop(caplog):
@@ -920,3 +921,185 @@ def test_gauge_value_never_overdraws_the_arc():
         # inner opening at size 100: margin 10 + stroke 9 per side -> 19..81
         assert min(white_cols) >= 19 and max(white_cols) <= 81, \
             f"{text}: value spans columns {min(white_cols)}..{max(white_cols)}"
+
+
+# ---------------------------------------------------------------------------
+# 0.8.0: gputemp metric + clock formats (issue #4)
+# ---------------------------------------------------------------------------
+def test_gputemp_nvml_backend(monkeypatch):
+    class _NVML:
+        def nvmlDeviceGetTemperature(self, handle, sensor):
+            assert handle == "h0" and sensor == 0
+            return 63
+    monkeypatch.setattr(monitors, "_probe_gputemp", lambda: ("nvml", _NVML(), "h0"))
+    r = Sampler().sample(MonitorSpec.from_params({"metric": "gputemp"}))
+    assert r.ok and r.text == "63°C" and r.pct == pytest.approx(63.0)
+    assert r.sample == pytest.approx(63.0)
+
+
+def test_gputemp_amdgpu_psutil_backend(monkeypatch):
+    _fake_temps(monkeypatch, {"amdgpu": [_shw("edge", 57.0, None, None),
+                                         _shw("junction", 62.0, None, None)]})
+    monkeypatch.setattr(monitors, "_probe_gputemp", lambda: ("amdgpu", "amdgpu:edge"))
+    r = Sampler().sample(MonitorSpec.from_params({"metric": "gputemp"}))
+    assert r.ok and r.text == "57°C" and r.sub == "edge"
+
+
+def test_gputemp_none_and_death_reprobe(monkeypatch):
+    monkeypatch.setattr(monitors, "_probe_gputemp", lambda: ("none",))
+    s = Sampler()
+    spec = MonitorSpec.from_params({"metric": "gputemp"})
+    assert not s.sample(spec).ok
+    # backend dies -> cache dropped -> next sample re-probes
+    class _NVML:
+        def nvmlDeviceGetTemperature(self, handle, sensor):
+            raise RuntimeError("driver unloaded")
+    s2 = Sampler()
+    monkeypatch.setattr(monitors, "_probe_gputemp", lambda: ("nvml", _NVML(), "h"))
+    assert not s2.sample(spec).ok
+    assert s2._gputemp_backend is None
+
+
+def test_gputemp_probe_prefers_nvml_then_amdgpu_sensors(monkeypatch):
+    import sys as _sys
+    monkeypatch.setitem(_sys.modules, "pynvml", _DeadNVML)
+    _fake_temps(monkeypatch, {"amdgpu": [_shw("edge", 57.0, None, None)]})
+    assert monitors._probe_gputemp() == ("amdgpu", "amdgpu:edge")
+    _fake_temps(monkeypatch, {})
+    assert monitors._probe_gputemp() == ("retry",)     # NVML present, no amdgpu
+    monkeypatch.setitem(_sys.modules, "pynvml", None)
+    assert monitors._probe_gputemp() == ("none",)
+
+
+def _at(y=2026, mo=7, d=18, h=13, mi=5, s=9, monkeypatch=None):
+    import time as _time
+    fixed = _time.struct_time((y, mo, d, h, mi, s, 5, 199, 1))
+    monkeypatch.setattr(monitors.time, "localtime", lambda: fixed)
+
+
+@pytest.mark.parametrize("params,text,sub", [
+    ({}, "13:05:09", "Sat 18 Jul"),                                   # auto fast
+    ({"interval": "30"}, "13:05", "Sat 18 Jul"),                      # auto slow
+    ({"clock_format": "24h"}, "13:05", "Sat 18 Jul"),
+    ({"clock_format": "12h"}, "1:05 PM", "Sat 18 Jul"),               # zero-stripped
+    ({"clock_format": "12h+seconds"}, "1:05:09 PM", "Sat 18 Jul"),
+    ({"clock_format": "24h+seconds", "interval": "30"}, "13:05:09", "Sat 18 Jul"),
+    ({"clock_date": "iso"}, "13:05:09", "2026-07-18"),
+    ({"clock_date": "us"}, "13:05:09", "Sat, Jul 18"),
+    ({"clock_date": "none"}, "13:05:09", ""),
+])
+def test_clock_formats_render(params, text, sub, monkeypatch):
+    _at(monkeypatch=monkeypatch)
+    p = {"metric": "clock", **params}
+    r = Sampler().sample(MonitorSpec.from_params(p))
+    assert r.text == text and r.sub == sub
+
+
+def test_clock_streams_band_by_resolved_format():
+    auto_fast = MonitorSpec.from_params({"metric": "clock"})
+    explicit = MonitorSpec.from_params({"metric": "clock",
+                                        "clock_format": "24h+seconds"})
+    assert auto_fast.key() == explicit.key()          # same resolved format
+    twelve = MonitorSpec.from_params({"metric": "clock", "clock_format": "12h"})
+    assert twelve.key() != auto_fast.key()
+    iso = MonitorSpec.from_params({"metric": "clock", "clock_date": "iso"})
+    assert iso.key() != auto_fast.key()               # date is part of the face
+
+
+def test_stray_clock_params_do_not_split_other_streams():
+    a = MonitorSpec.from_params({"metric": "cpu"})
+    b = MonitorSpec.from_params({"metric": "cpu", "clock_format": "12h",
+                                 "clock_date": "iso"})
+    assert a.key() == b.key()
+
+
+def test_unknown_clock_choices_fall_back_to_auto():
+    spec = MonitorSpec.from_params({"metric": "clock",
+                                    "clock_format": "martian",
+                                    "clock_date": "stardate"})
+    assert spec.clock_format == "auto" and spec.clock_date == "auto"
+
+
+def test_gputemp_and_clock_params_offered_in_editor():
+    spec = dict(ACTION_TYPES)["monitor"]["params"]
+    kinds = {key: kind for key, kind, _ in spec}
+    assert "gputemp" in kinds["metric"]
+    assert "12h+seconds" in kinds["clock_format"]
+    assert "iso" in kinds["clock_date"]
+
+
+def test_gputemp_probe_never_falls_from_working_nvml_to_amdgpu(monkeypatch):
+    """Hybrid laptops: a transient NVML sensor failure must NOT pin the key
+    to the amdgpu iGPU sensor (audit). nvmlInit succeeded => NVIDIA exists =>
+    retry NVML, and undo the init refcount."""
+    import sys as _sys
+    calls = {"shutdown": 0}
+
+    class _FlakyNVML:
+        @staticmethod
+        def nvmlInit():
+            pass
+        @staticmethod
+        def nvmlDeviceGetHandleByIndex(i):
+            return "h"
+        @staticmethod
+        def nvmlDeviceGetTemperature(h, s):
+            raise RuntimeError("transient")
+        @staticmethod
+        def nvmlShutdown():
+            calls["shutdown"] += 1
+    monkeypatch.setitem(_sys.modules, "pynvml", _FlakyNVML)
+    _fake_temps(monkeypatch, {"amdgpu": [_shw("edge", 41.0, None, None)]})
+    assert monitors._probe_gputemp() == ("retry",)     # NOT ("amdgpu", ...)
+    assert calls["shutdown"] == 1
+
+
+def test_gputemp_retry_settles_after_bounded_attempts(monkeypatch):
+    """A permanently failing sensor must stop re-probing every sample."""
+    probes = []
+    def probe():
+        probes.append(1)
+        return ("retry",)
+    monkeypatch.setattr(monitors, "_probe_gputemp", probe)
+    s = Sampler()
+    spec = MonitorSpec.from_params({"metric": "gputemp"})
+    for _ in range(25):
+        s.sample(spec)
+    assert s._gputemp_backend == ("none",)             # settled
+    assert len(probes) == 20                           # probing stopped
+
+
+def test_clock_12h_ampm_is_locale_proof_and_disambiguates_midnight(monkeypatch):
+    import time as _time
+    for hour, want in ((0, "12:05 AM"), (12, "12:05 PM"),
+                       (13, "1:05 PM"), (9, "9:05 AM")):
+        fixed = _time.struct_time((2026, 7, 18, hour, 5, 9, 5, 199, 1))
+        monkeypatch.setattr(monitors.time, "localtime", lambda f=fixed: f)
+        r = Sampler().sample(MonitorSpec.from_params(
+            {"metric": "clock", "clock_format": "12h"}))
+        assert r.text == want                          # never empty-%p ambiguity
+        assert not r.text.endswith(" ")
+
+
+def test_gputemp_prefers_working_nvml_over_present_amdgpu(monkeypatch):
+    """Hybrid machines have BOTH: a working NVML must win over the amdgpu
+    iGPU sensor (mutation audit: reordering the probe survived CI before)."""
+    import sys as _sys
+
+    class _GoodNVML:
+        @staticmethod
+        def nvmlInit():
+            pass
+        @staticmethod
+        def nvmlDeviceGetHandleByIndex(i):
+            return "h0"
+        @staticmethod
+        def nvmlDeviceGetTemperature(h, s):
+            return 63
+    monkeypatch.setitem(_sys.modules, "pynvml", _GoodNVML)
+    _fake_temps(monkeypatch, {"amdgpu": [_shw("edge", 41.0, None, None)]})
+    backend = monitors._probe_gputemp()
+    assert backend[0] == "nvml"                       # dGPU, not the iGPU
+    monkeypatch.setattr(monitors, "_probe_gputemp", lambda: backend)
+    r = Sampler().sample(MonitorSpec.from_params({"metric": "gputemp"}))
+    assert r.text == "63°C"                           # NVML value, not 41

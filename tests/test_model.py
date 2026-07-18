@@ -164,3 +164,29 @@ def test_config_dir_honors_xdg_config_home(monkeypatch):
     finally:
         monkeypatch.undo()
         importlib.reload(m)
+
+
+# -- 0.8.0: hold_action ------------------------------------------------------
+
+def test_key_hold_action_round_trips():
+    from fifine_deck.model import Action, KeyConfig
+    kc = KeyConfig(action=Action("launch_app", {"command": "x"}),
+                   hold_action=Action("hotkey", {"keys": "ctrl+l"}))
+    d = kc.to_dict()
+    back = KeyConfig.from_dict(d)
+    assert back.hold_action.type == "hotkey"
+    assert back.hold_action.params == {"keys": "ctrl+l"}
+
+
+def test_key_without_hold_action_omits_it_and_loads_old_configs():
+    from fifine_deck.model import Action, KeyConfig
+    kc = KeyConfig(action=Action("launch_app", {"command": "x"}))
+    assert "hold_action" not in kc.to_dict()      # old readers stay happy
+    old = KeyConfig.from_dict({"label": "L", "action": {"type": "none"}})
+    assert old.hold_action.type == "none"         # pre-0.8.0 config loads
+
+
+def test_key_with_only_hold_action_is_not_empty():
+    from fifine_deck.model import Action, KeyConfig
+    kc = KeyConfig(hold_action=Action("hotkey", {"keys": "a"}))
+    assert not kc.is_empty()

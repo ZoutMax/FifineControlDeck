@@ -40,16 +40,25 @@ METRICS = {
     "ram": "RAM",
     "vram": "VRAM",
     "gpu": "GPU",
+    "gputemp": "GPU°C",
     "temp": "TEMP",
     "net": "NET",
     "disk": "DISK",
     "clock": "CLOCK",
 }
 STYLES = ("number", "gauge", "graph")
-# Metrics on a fixed 0..100 axis (gauge + graph scale). temp is °C, not a
-# percentage, but shares the axis: 0-100°C covers consumer hardware and the
-# 90 warn threshold doubles as a sensible thermal alarm.
-PERCENT_METRICS = frozenset({"cpu", "ram", "vram", "gpu", "disk", "temp"})
+# Clock faces: "auto" keeps the 0.7.0 behavior (seconds iff refreshing under
+# 5 s); explicit choices pin the format regardless of interval.
+CLOCK_FORMATS = ("auto", "24h", "24h+seconds", "12h", "12h+seconds")
+CLOCK_DATES = ("auto", "iso", "us", "none")
+_CLOCK_STRF = {"24h": "%H:%M", "24h+seconds": "%H:%M:%S",
+               "12h": "%I:%M", "12h+seconds": "%I:%M:%S"}
+_CLOCK_DATE_STRF = {"auto": "%a %d %b", "iso": "%Y-%m-%d",
+                    "us": "%a, %b %d", "none": None}
+# Metrics on a fixed 0..100 axis (gauge + graph scale). temp/gputemp are °C,
+# not percentages, but share the axis: 0-100°C covers consumer hardware and
+# the 90 warn threshold doubles as a sensible thermal alarm.
+PERCENT_METRICS = frozenset({"cpu", "ram", "vram", "gpu", "disk", "temp", "gputemp"})
 # the only metrics a target applies to (disk mount, net iface, temp sensor)
 TARGETED_METRICS = frozenset({"disk", "net", "temp"})
 
@@ -81,6 +90,8 @@ class MonitorSpec:
     style: str = "number"
     interval: float = 1.0
     target: str = ""         # disk mount point or network interface ("" = auto)
+    clock_format: str = "auto"   # only meaningful for metric == "clock"
+    clock_date: str = "auto"
 
     @classmethod
     def from_params(cls, params: dict | None) -> "MonitorSpec":
@@ -101,7 +112,26 @@ class MonitorSpec:
             # A stray target on cpu/ram/vram would needlessly split the shared
             # sample stream (and with it psutil's global delta state).
             target = ""
-        return cls(metric=metric, style=style, interval=interval, target=target)
+        clock_format = str(p.get("clock_format", "auto")).strip().lower()
+        if clock_format not in CLOCK_FORMATS:
+            clock_format = "auto"
+        clock_date = str(p.get("clock_date", "auto")).strip().lower()
+        if clock_date not in CLOCK_DATES:
+            clock_date = "auto"
+        if metric != "clock":
+            # stray clock params on other metrics must not split their streams
+            clock_format = "auto"
+            clock_date = "auto"
+        return cls(metric=metric, style=style, interval=interval, target=target,
+                   clock_format=clock_format, clock_date=clock_date)
+
+    def resolved_clock(self) -> tuple[str, str]:
+        """The concrete (time format, date style) a clock key will render.
+        "auto" resolves the 0.7.0 way: seconds iff refreshing under 5 s."""
+        fmt = self.clock_format
+        if fmt == "auto":
+            fmt = "24h+seconds" if self.interval < 5 else "24h"
+        return (fmt, self.clock_date)
 
     def key(self) -> tuple:
         """Stream key: keys with the same metric+target share ONE sample
@@ -110,10 +140,10 @@ class MonitorSpec:
         deltas, so sampling a stream twice in quick succession returns
         garbage (~0) to the second caller."""
         if self.metric == "clock":
-            # A clock Reading bakes in its text format (seconds only under a
-            # 5 s interval), so clocks in different format bands must not
-            # share one Reading — a 30 s key would freeze a seconds display.
-            return ("clock", "sec" if self.interval < 5 else "min")
+            # A clock Reading bakes in its rendered format, so clocks whose
+            # RESOLVED format differs must not share one Reading — a 30 s key
+            # would freeze another key's seconds display (0.7.0 audit).
+            return ("clock", "|".join(self.resolved_clock()))
         return (self.metric, self.target)
 
 
@@ -145,6 +175,8 @@ class Sampler:
         self._net_prev: dict[str, tuple[float, int, int]] = {}
         self._vram_backend = None      # probed lazily; ("none",) when absent
         self._gpu_backend = None       # same lifecycle as _vram_backend
+        self._gputemp_backend = None   # same lifecycle as _vram_backend
+        self._gputemp_retries = 0      # bounded: a dead sensor must settle
         # psutil keys its cpu_percent since-last-call baseline PER THREAD, so
         # priming must be per thread too — a flag primed on one thread would
         # let another thread's first (garbage) reading through as real.
@@ -276,6 +308,42 @@ class Sampler:
             raise
         return Reading(pct, f"{pct:.0f}%", "load", sample=pct)
 
+    def _sample_gputemp(self, spec: MonitorSpec) -> Reading:
+        """GPU temperature with the sensor auto-picked per vendor — the
+        one-click alternative to a manual temp target like "amdgpu:edge"."""
+        b = self._gputemp_backend
+        if b is None:
+            b = _probe_gputemp()
+            if b[0] != "retry":
+                self._gputemp_backend = b
+                self._gputemp_retries = 0
+            else:
+                # ~20 samples (>= 10 s) covers a driver still loading at
+                # login; a sensor that still fails then is permanent — stop
+                # re-running import+nvmlInit every interval forever.
+                self._gputemp_retries += 1
+                if self._gputemp_retries >= 20:
+                    b = ("none",)
+                    self._gputemp_backend = b
+        if b[0] not in ("nvml", "amdgpu"):
+            return Reading(None, "n/a", "no GPU sensor", ok=False)
+        try:
+            if b[0] == "nvml":
+                # 0 == NVML_TEMPERATURE_GPU (the constant's value is stable API)
+                val = float(b[1].nvmlDeviceGetTemperature(b[2], 0))
+                label = "GPU"
+            else:
+                temps: dict = getattr(psutil, "sensors_temperatures", lambda: {})() or {}
+                picked = _pick_temp(temps, b[1])
+                if picked is None:
+                    raise LookupError(f"sensor {b[1]} vanished")
+                label, val = picked
+        except Exception:
+            self._gputemp_backend = None    # re-probe next sample (see vram)
+            raise
+        pct = max(0.0, min(100.0, val))
+        return Reading(pct, f"{val:.0f}°C", label, sample=val)
+
     def _sample_temp(self, spec: MonitorSpec) -> Reading:
         if psutil is None:
             return _NO_PSUTIL
@@ -291,12 +359,20 @@ class Sampler:
         return Reading(pct, f"{val:.0f}°C", label, sample=val)
 
     def _sample_clock(self, spec: MonitorSpec) -> Reading:
-        # No psutil needed. Seconds only at fast refresh — at slow intervals a
-        # seconds display would just show a stale value between pushes.
+        # No psutil needed. "auto" shows seconds only at fast refresh — at
+        # slow intervals a seconds display would just sit stale between pushes.
         now = time.localtime()
-        fmt = "%H:%M:%S" if spec.interval < 5 else "%H:%M"
-        return Reading(None, time.strftime(fmt, now),
-                       time.strftime("%a %d %b", now))
+        fmt, date = spec.resolved_clock()
+        text = time.strftime(_CLOCK_STRF[fmt], now)
+        if fmt.startswith("12h"):
+            text = text.lstrip("0") or text      # "01:05" -> "1:05"
+            # AM/PM by hand: %p is EMPTY in most European locales, which
+            # would leave an ambiguous 12-hour face (midnight == noon) with
+            # a stray trailing space (0.8.0 audit).
+            text += " AM" if now.tm_hour < 12 else " PM"
+        datef = _CLOCK_DATE_STRF[date]
+        sub = time.strftime(datef, now) if datef else ""
+        return Reading(None, text, sub)
 
 
 _NO_PSUTIL = Reading(None, "n/a", "psutil missing", ok=False)
@@ -386,6 +462,46 @@ def _probe_gpu():
     for busy in sorted(glob.glob("/sys/class/drm/card*/device/gpu_busy_percent")):
         return ("amdgpu", busy)
     return ("retry",) if nvml_present else ("none",)
+
+
+def _probe_gputemp():
+    """Find a GPU temperature source: NVIDIA via NVML, AMD via the amdgpu
+    chip in psutil's sensors (edge is the conventional die-edge sensor).
+
+    A WORKING nvmlInit means an NVIDIA GPU exists — a failed sensor read then
+    returns ("retry",) and never falls through to amdgpu: on hybrid laptops
+    the amdgpu chip is the iGPU, and caching it would pin the key to the
+    wrong GPU forever (0.8.0 audit). The amdgpu fallback runs only when NVML
+    itself is unavailable. The caller caps retries so a permanently
+    unsupported sensor settles instead of re-probing every sample."""
+    nvml_importable = False
+    nvml_inited = False
+    try:
+        import pynvml
+        nvml_importable = True
+        pynvml.nvmlInit()
+        nvml_inited = True
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        pynvml.nvmlDeviceGetTemperature(handle, 0)     # probe the sensor too
+        return ("nvml", pynvml, handle)
+    except Exception:
+        if nvml_inited:
+            # NVIDIA GPU present but the sensor read failed: undo the init
+            # refcount and let the caller retry (bounded) — NOT amdgpu.
+            try:
+                pynvml.nvmlShutdown()
+            except Exception:
+                pass
+            return ("retry",)
+    # NVML unavailable (import or init failed): AMD sysfs sensors are the
+    # right answer on AMD machines; otherwise retry (bounded by the caller)
+    # while an NVIDIA driver may still be loading.
+    if psutil is not None:
+        temps: dict = getattr(psutil, "sensors_temperatures", lambda: {})() or {}
+        for want in ("amdgpu:edge", "amdgpu"):
+            if _pick_temp(temps, want) is not None:
+                return ("amdgpu", want)
+    return ("retry",) if nvml_importable else ("none",)
 
 
 # ---------------------------------------------------------------------------

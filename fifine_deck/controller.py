@@ -26,6 +26,24 @@ from .model import DeckConfig, Profile, Page, KeyConfig
 from StreamDock.DeviceManager import DeviceManager
 from StreamDock.InputTypes import EventType
 
+# A key held this long (seconds) counts as a long press. Keys WITHOUT a hold
+# action are dispatched instantly on press-down, exactly as before 0.8.0 —
+# the threshold only ever delays keys that define a second action.
+HOLD_THRESHOLD = 0.5
+
+
+class _PendingHold:
+    """One in-flight press on a key that has a hold action. The `fired` flag
+    is the race arbiter between the hold timer and the release event: whoever
+    flips it under the lock owns the dispatch."""
+    __slots__ = ("kc", "timer", "fired", "lock")
+
+    def __init__(self, kc):
+        self.kc = kc
+        self.timer = None
+        self.fired = False
+        self.lock = threading.Lock()
+
 log = logging.getLogger(__name__)
 
 
@@ -54,6 +72,7 @@ class DeckController:
         # actions or the SDK reader.
         self._sampler = monitors.Sampler()
         self._monitor_state: dict[int, tuple] = {}  # key index -> (last_t, signature)
+        self._holds: dict[int, _PendingHold] = {}   # key index -> in-flight long-press
         self._monitor_stop = threading.Event()
         self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor_thread.start()
@@ -126,8 +145,21 @@ class DeckController:
         if self._running and isinstance(dev, FifineDeck) and self.device is None:
             self._setup_device(dev)
 
+    def _cancel_holds(self) -> None:
+        """Cancel every in-flight long-press. A lost release (unplug mid-hold,
+        reconnect) must not leave stale entries: the duplicate-down guard
+        would silently swallow the key's next genuine press, and an armed
+        timer would fire the hold action against a gone device."""
+        while self._holds:
+            _, pending = self._holds.popitem()
+            if pending.timer is not None:
+                pending.timer.cancel()
+            with pending.lock:
+                pending.fired = True    # claim: a timer sliver must not dispatch
+
     def _on_removed(self, dev):
         if dev is self.device:
+            self._cancel_holds()
             with self._lock:
                 self.device = None
             if self.on_disconnect:
@@ -143,6 +175,7 @@ class DeckController:
                     log.warning("%s", hint)
                 return False
             dev.init()
+            self._cancel_holds()        # a replug starts with a clean slate
             with self._lock:
                 self.device = dev
                 self.page_index = 0
@@ -159,6 +192,7 @@ class DeckController:
 
     def stop(self):
         self._running = False
+        self._cancel_holds()
         self._monitor_stop.set()
         self._action_queue.put(None)   # unblock + end the action worker
         with self._lock:
@@ -485,15 +519,52 @@ class DeckController:
                 self.on_key_event(index, pressed)
             self.flash_key(index, pressed)
             if pressed:
+                if index in self._holds:
+                    return                       # duplicate down (missed release)
                 kc = self.page().keys.get(index)
-                if kc:
-                    if kc.action.type == "open_folder" and kc.folder is not None:
-                        folder = kc.folder
-                        self._enqueue(lambda f=folder: self.enter_folder(f))
-                    else:
-                        self._dispatch(kc.action)
+                if not kc:
+                    return
+                if kc.hold_action.type == "none":
+                    # no hold action: fire on press-down, zero added latency
+                    self._press_action(kc)
+                else:
+                    pending = _PendingHold(kc)
+
+                    def _hold_fires(p=pending):
+                        with p.lock:
+                            if p.fired:
+                                return           # release beat us to it
+                            p.fired = True
+                        self._dispatch(p.kc.hold_action)
+
+                    t = threading.Timer(HOLD_THRESHOLD, _hold_fires)
+                    t.daemon = True
+                    pending.timer = t
+                    self._holds[index] = pending
+                    t.start()
+            else:
+                pending = self._holds.pop(index, None)
+                if pending is None:
+                    return
+                if pending.timer is not None:
+                    pending.timer.cancel()
+                with pending.lock:
+                    hold_fired = pending.fired
+                    # claim the dispatch so a timer sliver that survived
+                    # cancel() cannot double-fire after us
+                    pending.fired = True
+                if not hold_fired:
+                    self._press_action(pending.kc)
         elif event.event_type in (EventType.KNOB_ROTATE, EventType.KNOB_PRESS):
             self._knob_event(event)
+
+    def _press_action(self, kc: KeyConfig) -> None:
+        """Dispatch a key's primary action (folders open, others execute)."""
+        if kc.action.type == "open_folder" and kc.folder is not None:
+            folder = kc.folder
+            self._enqueue(lambda f=folder: self.enter_folder(f))
+        else:
+            self._dispatch(kc.action)
 
     def _knob_event(self, event):
         # knob index is device-specific; map knob_1.. to 1..

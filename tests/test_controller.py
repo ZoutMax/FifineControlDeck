@@ -221,3 +221,188 @@ def test_goto_page_clamps_bogus_indices():
         assert c.page_index == 1                  # clamped to the last page
     finally:
         c.stop()
+
+
+# ---------------------------------------------------------------------------
+# 0.8.0: press-and-hold key actions (issue #4)
+# ---------------------------------------------------------------------------
+def _btn(state, key=1):
+    from StreamDock.InputTypes import ButtonKey, EventType, InputEvent
+    return InputEvent(event_type=EventType.BUTTON, key=ButtonKey(key), state=state)
+
+
+def _until(cond, timeout=2.0):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if cond():
+            return True
+        time.sleep(0.01)
+    return cond()
+
+
+def test_key_without_hold_action_fires_on_press_down():
+    """Regression guard: plain keys keep firing the moment they go DOWN —
+    the hold feature must add zero latency to them."""
+    c, dev = _connected()
+    try:
+        c.config.active_profile().pages[0].key(1).action = \
+            Action("brightness", {"mode": "set", "value": "30"})
+        c._key_callback(dev, _btn(1))          # down only, never released
+        assert _until(lambda: dev.brightness == 30)
+    finally:
+        c.stop()
+
+
+def test_short_press_with_hold_action_fires_primary_on_release(monkeypatch):
+    monkeypatch.setattr(controller, "HOLD_THRESHOLD", 0.25)
+    c, dev = _connected()
+    try:
+        kc = c.config.active_profile().pages[0].key(1)
+        kc.action = Action("brightness", {"mode": "set", "value": "30"})
+        kc.hold_action = Action("brightness", {"mode": "set", "value": "77"})
+        c._key_callback(dev, _btn(1))          # down
+        time.sleep(0.05)
+        assert dev.brightness != 30            # deferred: nothing on down
+        c._key_callback(dev, _btn(0))          # quick release
+        assert _until(lambda: dev.brightness == 30)
+        time.sleep(0.35)                       # well past the threshold
+        assert dev.brightness == 30            # hold action never fired
+    finally:
+        c.stop()
+
+
+def test_long_hold_fires_hold_action_and_suppresses_primary(monkeypatch):
+    monkeypatch.setattr(controller, "HOLD_THRESHOLD", 0.1)
+    c, dev = _connected()
+    try:
+        kc = c.config.active_profile().pages[0].key(1)
+        kc.action = Action("brightness", {"mode": "set", "value": "30"})
+        kc.hold_action = Action("brightness", {"mode": "set", "value": "77"})
+        c._key_callback(dev, _btn(1))          # down and keep holding
+        assert _until(lambda: dev.brightness == 77)
+        c._key_callback(dev, _btn(0))          # release after the hold fired
+        time.sleep(0.15)
+        assert dev.brightness == 77            # primary stayed suppressed
+    finally:
+        c.stop()
+
+
+class _FakeTimer:
+    """Deterministic stand-in for threading.Timer: never fires on its own,
+    exposes the callback so tests can invoke the race sliver by hand."""
+    instances: list = []
+
+    def __init__(self, interval, fn):
+        self.interval, self.fn, self.cancelled = interval, fn, False
+        self.daemon = False
+        _FakeTimer.instances.append(self)
+
+    def start(self):
+        pass
+
+    def cancel(self):
+        self.cancelled = True
+
+
+def test_timer_sliver_after_release_cannot_double_fire(monkeypatch):
+    """The race arbiter: a hold timer that slipped past cancel() must see the
+    release's claim on `fired` and do nothing."""
+    monkeypatch.setattr(controller.threading, "Timer", _FakeTimer)
+    _FakeTimer.instances = []
+    c, dev = _connected()
+    try:
+        kc = c.config.active_profile().pages[0].key(1)
+        kc.action = Action("brightness", {"mode": "set", "value": "30"})
+        kc.hold_action = Action("brightness", {"mode": "set", "value": "77"})
+        c._key_callback(dev, _btn(1))          # down (fake timer armed)
+        assert len(_FakeTimer.instances) == 1
+        c._key_callback(dev, _btn(0))          # release -> primary dispatched
+        assert _until(lambda: dev.brightness == 30)
+        _FakeTimer.instances[0].fn()           # the sliver fires anyway
+        time.sleep(0.1)
+        assert dev.brightness == 30            # claimed: hold did NOT run
+    finally:
+        c.stop()
+
+
+def test_duplicate_down_events_do_not_stack_holds(monkeypatch):
+    monkeypatch.setattr(controller.threading, "Timer", _FakeTimer)
+    _FakeTimer.instances = []
+    c, dev = _connected()
+    try:
+        kc = c.config.active_profile().pages[0].key(1)
+        kc.hold_action = Action("brightness", {"mode": "set", "value": "77"})
+        c._key_callback(dev, _btn(1))
+        c._key_callback(dev, _btn(1))          # device hiccup: second down
+        assert len(_FakeTimer.instances) == 1  # one pending hold, not two
+        assert len(c._holds) == 1
+    finally:
+        c.stop()
+
+
+def test_folder_key_with_hold_action_still_opens_on_short_press(monkeypatch):
+    monkeypatch.setattr(controller, "HOLD_THRESHOLD", 0.25)
+    c, dev = _connected()
+    try:
+        kc = c.config.active_profile().pages[0].key(1)
+        kc.action = Action("open_folder", {})
+        kc.folder = Folder(pages=[Page(name="Inside")])
+        kc.hold_action = Action("brightness", {"mode": "set", "value": "77"})
+        c._key_callback(dev, _btn(1))
+        c._key_callback(dev, _btn(0))          # quick press
+        assert _until(lambda: c.container() is kc.folder)
+        assert dev.brightness != 77
+    finally:
+        c.stop()
+
+
+def test_folder_key_with_hold_action_holds_without_entering(monkeypatch):
+    monkeypatch.setattr(controller, "HOLD_THRESHOLD", 0.1)
+    c, dev = _connected()
+    try:
+        kc = c.config.active_profile().pages[0].key(1)
+        kc.action = Action("open_folder", {})
+        kc.folder = Folder(pages=[Page(name="Inside")])
+        kc.hold_action = Action("brightness", {"mode": "set", "value": "77"})
+        c._key_callback(dev, _btn(1))          # hold it
+        assert _until(lambda: dev.brightness == 77)
+        c._key_callback(dev, _btn(0))
+        time.sleep(0.15)
+        assert c.container() is not kc.folder  # folder NOT entered
+    finally:
+        c.stop()
+
+
+def test_unplug_mid_hold_cancels_and_replug_press_works(monkeypatch):
+    """Audit finding: a lost release (unplug mid-hold) left a stale _holds
+    entry — the armed timer fired against a gone device and the key's next
+    genuine press after replug was silently swallowed."""
+    monkeypatch.setattr(controller, "HOLD_THRESHOLD", 0.1)
+    c, dev = _connected()
+    try:
+        kc = c.config.active_profile().pages[0].key(1)
+        kc.action = Action("brightness", {"mode": "set", "value": "30"})
+        kc.hold_action = Action("brightness", {"mode": "set", "value": "77"})
+        c._key_callback(dev, _btn(1))          # down...
+        c._on_removed(dev)                     # ...and the deck unplugs
+        assert c._holds == {}                  # entry cancelled
+        time.sleep(0.2)
+        assert c.config.brightness != 77       # timer did not fire the hold
+        assert c._setup_device(dev)            # replug
+        c._key_callback(dev, _btn(1))          # a fresh short press...
+        c._key_callback(dev, _btn(0))
+        assert _until(lambda: dev.brightness == 30)   # ...works normally
+    finally:
+        c.stop()
+
+
+def test_stop_cancels_inflight_holds(monkeypatch):
+    monkeypatch.setattr(controller, "HOLD_THRESHOLD", 0.1)
+    c, dev = _connected()
+    kc = c.config.active_profile().pages[0].key(1)
+    kc.hold_action = Action("brightness", {"mode": "set", "value": "77"})
+    c._key_callback(dev, _btn(1))
+    c.stop()
+    assert c._holds == {}
+    time.sleep(0.2)
+    assert c.config.brightness != 77

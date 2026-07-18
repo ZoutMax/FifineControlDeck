@@ -1017,3 +1017,43 @@ def test_autostart_toggle_reads_the_entry_file_outside_flatpak(qapp, tmp_path, m
         assert w2.autostart_act.isChecked()
     finally:
         w2.close(); c2.stop(); QApplication.processEvents()
+
+
+# -- hold action editor (0.8.0) ----------------------------------------------
+
+def test_hold_action_edits_reach_the_model_and_survive_clear(win):
+    w, cfg, c = win
+    w._on_action_dropped(1, "launch_app")
+    kc = c.page().key(1)
+    ed = w.editor
+    combo = ed.hold_params.type_combo
+    idx = combo.findData("hotkey") if combo.findData("hotkey") >= 0 else None
+    if idx is None:                       # combo stores labels, find by text
+        from fifine_deck.actions import ACTION_TYPES
+        idx = combo.findText(ACTION_TYPES["hotkey"]["label"])
+    assert idx >= 0
+    combo.setCurrentIndex(idx)
+    assert kc.hold_action.type == "hotkey"
+    assert kc.action.type == "launch_app"          # primary untouched
+    keys_widget = ed.hold_params._params.get("keys")
+    keys_widget.setText("ctrl+shift+m")
+    assert kc.hold_action.params.get("keys") == "ctrl+shift+m"
+    # a hold edit must not disturb the primary icon (provenance rule)
+    icon_before = kc.icon
+    combo.setCurrentIndex(combo.findText(ACTION_TYPES["media"]["label"])
+                          if combo.findData("media") < 0 else combo.findData("media"))
+    assert kc.icon == icon_before
+    ed._clear_key()
+    assert kc.hold_action.type == "none"
+
+
+def test_hold_editor_excludes_monitor_and_open_folder(win):
+    w, cfg, c = win
+    w._on_action_dropped(2, "launch_app")
+    ed = w.editor
+    from fifine_deck.actions import ACTION_TYPES
+    labels = [ed.hold_params.type_combo.itemText(i)
+              for i in range(ed.hold_params.type_combo.count())]
+    assert ACTION_TYPES["monitor"]["label"] not in labels
+    assert ACTION_TYPES["open_folder"]["label"] not in labels
+    assert ACTION_TYPES["folder_back"]["label"] in labels   # hold-to-go-back

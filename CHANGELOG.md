@@ -4,6 +4,20 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - Unreleased
+### Added
+- **Press-and-hold key actions** (#4): every key can carry a second action
+  that fires after holding it ~0.5 s — long-press *Back* to exit a folder,
+  long-press a monitor key to run something, double what 15 keys can do.
+  Keys without a hold action keep firing instantly on press-down, exactly as
+  before; only keys that define one wait for the release/threshold.
+- **GPU temperature, one click** (#4): a dedicated `gputemp` monitor metric
+  that auto-picks the sensor (NVIDIA via NVML, AMD via the `amdgpu` chip's
+  edge sensor) — no more manual `chip:label` targets for the common case.
+- **Clock formats** (#4): 12h/24h with or without seconds, and date styles
+  (weekday, ISO, US, or none) for the clock key. "Auto" keeps the previous
+  behavior (seconds only when refreshing under 5 s).
+
 ## [0.7.0] - 2026-07-18
 ### Added
 - **Monitor keys, round 2** (#3): **GPU load** (NVIDIA via NVML, AMD via
