@@ -4,6 +4,20 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] - 2026-07-18
+### Fixed
+- **Choosing an icon from the Library did nothing.** The key editor re-applied
+  the action's default icon on every edit — and picking an icon is itself an
+  edit, so the chosen icon was overwritten in the same moment. The icon now
+  follows the action only when the action actually changes; custom File… icons
+  were never affected.
+- **Config no longer lost under Flatpak**: `XDG_CONFIG_HOME` is honored, so the
+  configuration persists instead of being written into the sandbox's throwaway
+  home.
+- **Key text no longer renders tiny on Fedora/Flatpak runtimes**: the font
+  search now covers their DejaVu/Liberation layouts instead of silently falling
+  back to a bitmap font.
+
 ## [0.6.0] - 2026-07-17
 ### Added
 - **System-monitor keys** (#2): a new *System monitor* action turns a key into

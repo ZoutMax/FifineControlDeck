@@ -1,3 +1,10 @@
+fifine-control-deck (0.6.1) noble; urgency=medium
+
+  * Library icon picker fix, plus Flatpak config persistence and font
+    fallback
+
+ -- ZoutMax <150600436+ZoutMax@users.noreply.github.com>  Sat, 18 Jul 2026 11:10:32 +0200
+
 fifine-control-deck (0.6.0ppa1) resolute; urgency=medium
 
   * PPA build of 0.6.0 for resolute
