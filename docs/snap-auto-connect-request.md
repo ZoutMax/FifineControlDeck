@@ -1,3 +1,5 @@
+> **Superseded (2026-07-18):** the snap moved to classic confinement (strict cannot reach /dev/hidraw), so this auto-connect request no longer applies. See `snap-classic-request.md` — the classic request is filed at https://forum.snapcraft.io/t/52368.
+
 # Snap Store auto-connect request (draft)
 
 The snap uses the `raw-usb` and `hardware-observe` interfaces to talk to the
