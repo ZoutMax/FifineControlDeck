@@ -653,7 +653,12 @@ class ActionEditor(QWidget):
         self.bg_btn.set_color(kc.bg_color)
         self.fg_btn.set_color(kc.text_color)
         self.params.set_action(kc.action)
-        self._last_action_sig = self._action_sig(kc.action)
+        # Baseline MUST come from the widgets, exactly like _on_edit reads it:
+        # the editor materializes every field of the action type, so a stored
+        # action with optional fields omitted (e.g. volume without "step")
+        # would otherwise look "changed" on the very first edit and clobber the
+        # icon the user had just picked.
+        self._last_action_sig = self._action_sig(self.params.get_action())
         self._building = False
 
     @staticmethod

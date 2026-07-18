@@ -539,3 +539,49 @@ def test_editing_label_does_not_touch_a_chosen_icon(qapp):
     ed.label_edit.setText("Streaming")
     assert kc.icon == assets.library_ref("star")
     assert kc.label == "Streaming"
+
+
+@pytest.mark.parametrize("atype,params", [
+    ("launch_app", {"command": "obs"}),
+    ("run_command", {"command": "ls"}),
+    ("open_url", {"url": "https://x.dev"}),
+    ("hotkey", {"keys": "ctrl+c"}),
+    ("text", {"text": "hi"}),
+    ("media", {"cmd": "play-pause"}),
+    ("volume", {"cmd": "up"}),          # has an optional "step" field
+    ("brightness", {"mode": "up"}),     # has an optional "value" field
+    ("close_app", {"target": "obs"}),
+    ("goto_page", {"page": "2"}),
+    ("next_page", {}),
+    ("sleep_screen", {}),
+])
+def test_first_library_pick_sticks_for_every_action_type(qapp, atype, params):
+    """The FIRST pick after selecting a key is the case that broke: the editor
+    materializes every field of an action type, so a stored action with
+    optional fields omitted looked 'changed' on the first edit and the icon
+    was replaced by the action default. Cover every type, first pick."""
+    from fifine_deck.gui.widgets import ActionEditor
+    from fifine_deck.model import KeyConfig, Action
+    from fifine_deck import assets
+    kc = KeyConfig()
+    kc.action = Action(atype, dict(params))
+    kc.icon = assets.library_ref("home")
+    ed = ActionEditor()
+    ed.set_key(kc, 1)
+    ed.icon_edit.setText(assets.library_ref("star"))     # first pick
+    assert kc.icon == assets.library_ref("star"), f"{atype}: first pick reverted"
+    assert kc.action.type == atype                       # action untouched
+
+
+def test_consecutive_library_picks_all_stick(qapp):
+    from fifine_deck.gui.widgets import ActionEditor
+    from fifine_deck.model import KeyConfig, Action
+    from fifine_deck import assets
+    kc = KeyConfig()
+    kc.action = Action("volume", {"cmd": "up"})
+    kc.icon = assets.library_ref("volume_up")
+    ed = ActionEditor()
+    ed.set_key(kc, 1)
+    for name in ("star", "folder", "web", "lock"):
+        ed.icon_edit.setText(assets.library_ref(name))
+        assert kc.icon == assets.library_ref(name), f"pick {name} reverted"
