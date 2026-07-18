@@ -4,6 +4,28 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.6.2] - 2026-07-18
+### Fixed
+- **Icons finally keep the one you picked.** 0.6.1's fix was incomplete: an
+  icon chosen from the Library was still lost when you then typed the
+  command/URL/hotkey (the natural order). Icons and labels now track
+  *provenance* — only an untouched auto-assigned icon ever follows the
+  action; your choice survives every edit, an explicit clear stays cleared,
+  and dropping a second action onto a key re-skins auto identities without
+  touching custom ones.
+- **A full editor audit (25 more fixes).** Highlights: selecting a password
+  key no longer touches the keyring or pops warnings; unknown action types,
+  values and deleted profile targets from other versions round-trip instead
+  of being silently rewritten; a dropped *Switch profile* key works
+  immediately; a device reconnect no longer wipes your selection or an open
+  picker dialog; page keys navigate folder pages correctly and *Go to page*
+  is clamped; knob editors follow page/profile switches; autosave failures
+  are shown instead of silently losing edits; double-click-created folders
+  are saved; an undecodable GIF renders statically instead of freezing the
+  key; stale monitor frames can't repaint the wrong page.
+- **Type-text via legacy ydotool 0.1.8 (jammy)**: the text is passed as
+  `/dev/stdin` instead of `-`, which old ydotool misread as a filename.
+
 ## [0.6.1] - 2026-07-18
 ### Fixed
 - **Choosing an icon from the Library did nothing.** The key editor re-applied

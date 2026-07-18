@@ -44,6 +44,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.6.2" date="2026-07-18">
+      <description>
+        <p>Icon picks stick for good (provenance tracking) plus a 25-fix editor audit and legacy-ydotool typing fix</p>
+      </description>
+    </release>
     <release version="0.6.1" date="2026-07-18">
       <description>
         <p>Library icon picker fix, plus Flatpak config persistence and font fallback</p>
