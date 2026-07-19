@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>fifine Control Deck — Linux</title>
 <meta name="description" content="A native Linux control app for the fifine Control Deck / Mirabox Stream Dock macro keypad. Install via apt (PPA) or .deb. amd64 + arm64.">
+<link rel="canonical" href="https://zoutmax.github.io/FifineControlDeck/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="fifine Control Deck — native Linux app for the AmpliGame D6 / Stream Dock">
+<meta property="og:description" content="Per-key LCD icons, drag-and-drop actions, live system-monitor keys, press-and-hold, profiles and folders. Free and open source (MIT). amd64 + arm64.">
+<meta property="og:url" content="https://zoutmax.github.io/FifineControlDeck/">
+<meta property="og:image" content="https://zoutmax.github.io/FifineControlDeck/img/screenshot-01.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="fifine Control Deck — native Linux app for the AmpliGame D6 / Stream Dock">
+<meta name="twitter:image" content="https://zoutmax.github.io/FifineControlDeck/img/screenshot-01.png">
 <link rel="icon" href="img/icon.png">
 <style>
   :root{
@@ -46,6 +55,7 @@
 
   .shots{display:grid; gap:18px}
   .shots img{width:100%; height:auto; border-radius:12px; border:1px solid var(--line); box-shadow:0 8px 30px rgba(0,0,0,.35)}
+  .shotcap{color:var(--muted); font-size:.9rem; text-align:center; margin:-8px 0 4px}
 
   .features ul{list-style:none; padding:0; margin:0; display:grid; grid-template-columns:1fr 1fr; gap:10px 24px}
   .features li{padding-left:26px; position:relative; color:var(--text)}
@@ -102,19 +112,24 @@ sudo apt install fifine-control-deck</pre>
       <h2>The device &amp; the app</h2>
       <img src="img/device.jpg" alt="The fifine Control Deck — a 15-key macro keypad with per-key LCD keys and RGB edge lighting">
       <img src="img/screenshot-01.png" alt="Configuration GUI: actions catalog, the live key grid with system-monitor keys (CPU gauge, RAM, network graph, disk), and the key-settings panel">
+      <p class="shotcap">The actions catalog, the live 3×5 key grid, and the key-settings panel.</p>
+      <img src="img/screenshot-02.png" alt="Editing a key: icon, colours, label, the assigned action, and the optional press-and-hold action">
+      <p class="shotcap">Editing a key — icon, colours, label, its action, and an optional press-and-hold action.</p>
     </section>
 
     <section class="features">
       <h2>Features</h2>
       <ul>
         <li>Live per-key icons, labels &amp; colours (and animated GIF keys)</li>
-        <li><strong>System-monitor keys</strong> — live CPU, RAM, VRAM, GPU load, temperatures, network &amp; disk on the key LCDs, as numbers, gauges or graphs — plus a clock face</li>
+        <li><strong>System-monitor keys</strong> — live CPU, RAM, VRAM, GPU load, temperatures, network &amp; disk on the key LCDs, as numbers, gauges or graphs — plus a clock face (12/24h, date styles)</li>
+        <li><strong>Press-and-hold</strong> — a second action on every key, fired by holding it ~½ s</li>
         <li>Drag-and-drop actions catalog</li>
         <li>Launch apps, hotkeys, type text, run scripts</li>
         <li>Media, volume &amp; brightness control</li>
         <li>Multiple profiles &amp; pages</li>
         <li>Folders (nested key-sets) &amp; multi-step macros</li>
         <li>Knob/dial support (press / rotate)</li>
+        <li>Wayland &amp; X11</li>
         <li>Hotplug-aware; optional autostart on login</li>
       </ul>
     </section>
