@@ -18,17 +18,22 @@ with profiles, multiple pages, a configuration GUI, and a system tray.
 - **Launchpad PPA** (apt) — **recommended, drives the deck fully:**
   `sudo add-apt-repository ppa:zoutmax/fifine && sudo apt install fifine-control-deck`
   (<https://launchpad.net/~zoutmax/+archive/ubuntu/fifine>)
-- **Snap Store:** <https://snapcraft.io/fifine-control-deck> — ⚠️ the current
-  store snap is strict-confined and **opens but cannot yet control the deck**
-  (the deck needs `/dev/hidraw`, which strict confinement can't grant). A working
-  **classic** build is pending Snap Store review; until then use the PPA or `.deb`.
+- **Direct download** (`.deb`, amd64/arm64):
+  <https://github.com/ZoutMax/fifine-control-deck-linux/releases/latest>
 - **Source (GitHub):** <https://github.com/ZoutMax/fifine-control-deck-linux>
   ([Releases](https://github.com/ZoutMax/fifine-control-deck-linux/releases) ·
   [Issues](https://github.com/ZoutMax/fifine-control-deck-linux/issues))
 - **Launchpad project:** <https://launchpad.net/fifine-control-deck>
   ([code mirror](https://code.launchpad.net/~zoutmax/fifine-control-deck/+git/fifine-control-deck-linux))
 
-Available for **amd64** and **arm64** (PPA/`.deb` now; classic Snap pending review).
+Available for **amd64** and **arm64** via the PPA and `.deb`.
+
+> **Store availability:** Snap and Flathub submissions are on hold. The deck is
+> driven over `/dev/hidraw` with a vendor HID protocol, which strict snap
+> confinement cannot grant and which sits awkwardly with Flatpak sandboxing, and
+> both stores reasonably want more development history from a young project.
+> Both will be revisited once the project has a longer track record. The PPA and
+> `.deb` are fully supported and are the recommended way to install.
 
 ## Status: Alpha
 
@@ -155,13 +160,15 @@ sudo usermod -aG plugdev "$USER"   # then log out/in if it was just added
 
 To build the `.deb` yourself: `./packaging/build-deb.sh` → `dist/`.
 
-**Snap / Ubuntu App Center:** the app builds as a **classic** snap that drives
-the deck (the strict snap can't — it has no route to `/dev/hidraw`). Packaging
-lives in `snap/`; see [`docs/SNAP.md`](docs/SNAP.md). On first run, if the deck
+**Snap (on hold):** the app builds as a **classic** snap that drives the deck
+(the strict snap can't — it has no route to `/dev/hidraw`). Packaging lives in
+`snap/`; see [`docs/SNAP.md`](docs/SNAP.md). Classic confinement needs Canonical
+approval, which is on hold until the project has more history, so nothing is
+currently published to the store. On first run, if the deck
 isn't detected the app shows an **"Enable device access"** button that installs
 the required udev rule for you via a graphical password prompt and reconnects —
-no terminal needed (a snap can't install a udev rule itself). The classic build
-is pending Snap Store review; until it's published, use the PPA / `.deb`.
+no terminal needed (a snap can't install a udev rule itself). Until the store
+review is revisited, use the PPA / `.deb`.
 
 **Launchpad PPA (apt):** Debian source packaging lives in `debian/` — see
 [`docs/PPA.md`](docs/PPA.md) to build the source package and upload it so users
