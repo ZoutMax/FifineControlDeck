@@ -74,6 +74,10 @@ The core is feature-complete and hardened, but it's early. Realistic expectation
   nothing to show).
 - **Knob/dial support** (press / rotate-left / rotate-right) on devices that
   have dials.
+- **Composable by design** — the *Run shell command* action turns any script
+  into a key. Community recipes live in [`contrib/`](contrib/), including
+  [offline voice dictation on a key](contrib/dictation/) (press, speak in
+  English or French, press — your words type themselves).
 - Multiple **profiles**, each with multiple **pages**, plus **folders** —
   drop an *Open folder* action on a key, double-click it in the editor to go
   in (a **Back** key returns); folders can nest and have their own pages.
