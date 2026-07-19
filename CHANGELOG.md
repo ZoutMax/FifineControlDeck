@@ -4,7 +4,7 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
-## [0.8.1] - Unreleased
+## [0.8.1] - 2026-07-19
 ### Fixed
 - **Color picker readable in dark mode.** The dialog could open as the
   platform's native chooser — a white window unreadable against the app's
