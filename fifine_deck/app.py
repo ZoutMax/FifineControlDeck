@@ -399,7 +399,10 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
     sig_r.setblocking(False)
     sig_w.setblocking(False)
     signal.set_wakeup_fd(sig_w.fileno())
-    notifier = QSocketNotifier(sig_r.fileno(), QSocketNotifier.Type.Read, app)
+    # PyQt6's stubs want a voidptr here, but the int fd is accepted (and is
+    # the documented Qt usage) at runtime.
+    notifier = QSocketNotifier(sig_r.fileno(),  # type: ignore[call-overload]
+                               QSocketNotifier.Type.Read, app)
 
     def _drain():
         try:

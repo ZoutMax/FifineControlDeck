@@ -962,12 +962,10 @@ def test_nvidia_gpu_present_reads_pci_sysfs(tmp_path, monkeypatch):
     (other / "vendor").write_text("0x10ec\n")   # realtek NIC
     (other / "class").write_text("0x020000\n")
     monkeypatch.setattr(monitors, "_PCI_DEVICES", str(tmp_path))
-    monkeypatch.setattr(monitors._nvidia_gpu_present, "_cached", None,
-                        raising=False)
+    monkeypatch.setattr(monitors, "_nvidia_present_cache", None)
     assert monitors._nvidia_gpu_present() is True
     (dev / "vendor").write_text("0x1002\n")     # now AMD-only
-    monkeypatch.setattr(monitors._nvidia_gpu_present, "_cached", None,
-                        raising=False)
+    monkeypatch.setattr(monitors, "_nvidia_present_cache", None)
     assert monitors._nvidia_gpu_present() is False
 
 

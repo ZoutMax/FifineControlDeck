@@ -429,6 +429,7 @@ def _pkg_entry(entries):
 
 
 _PCI_DEVICES = "/sys/bus/pci/devices"
+_nvidia_present_cache: bool | None = None   # scanned once; PCI doesn't change
 
 
 def _nvidia_gpu_present() -> bool:
@@ -436,12 +437,11 @@ def _nvidia_gpu_present() -> bool:
     exposes vendor/class before (and without) the nvidia module loading. This
     is what lets the probes tell "NVML failed because there is no NVIDIA GPU"
     (fall through to amdgpu now) from "failed because the driver isn't up yet"
-    (retry — on a hybrid machine the amdgpu node is the iGPU, and caching it
-    would pin the key to the wrong GPU for the process lifetime).
-    Cached after the first scan: PCI topology doesn't change under us."""
-    cached = getattr(_nvidia_gpu_present, "_cached", None)
-    if cached is None:
-        cached = False
+    (retry: on a hybrid machine the amdgpu node is the iGPU, and caching it
+    would pin the key to the wrong GPU for the process lifetime)."""
+    global _nvidia_present_cache
+    if _nvidia_present_cache is None:
+        found = False
         for vf in glob.glob(os.path.join(_PCI_DEVICES, "*", "vendor")):
             try:
                 with open(vf) as f:
@@ -450,12 +450,12 @@ def _nvidia_gpu_present() -> bool:
                 with open(os.path.join(os.path.dirname(vf), "class")) as f:
                     # 0x03xxxx == PCI display controller class
                     if f.read().strip().lower().startswith("0x03"):
-                        cached = True
+                        found = True
                         break
             except OSError:
                 continue
-        _nvidia_gpu_present._cached = cached
-    return cached
+        _nvidia_present_cache = found
+    return _nvidia_present_cache
 
 
 def _probe_vram(final: bool = False):
