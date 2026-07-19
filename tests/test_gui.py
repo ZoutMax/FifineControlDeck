@@ -1061,16 +1061,20 @@ def test_hold_editor_excludes_monitor_and_open_folder(win):
 
 def test_color_picker_never_uses_the_native_dialog(win, monkeypatch):
     """The native color chooser ignores the dark stylesheet (user report:
-    white window, unreadable). The pick must force Qt's own themed dialog."""
+    white window, unreadable). The pick must construct Qt's own dialog with
+    non-native FORCED on the instance and the dark stylesheet stamped on."""
     w, cfg, c = win
     w._on_action_dropped(3, "launch_app")
-    captured = {}
     from fifine_deck.gui import widgets as wg
+    seen = {}
+    orig_exec = wg.QColorDialog.exec
 
-    def fake_get_color(initial, parent=None, title="", options=None):
-        captured["options"] = options
-        from PyQt6.QtGui import QColor
-        return QColor()                       # invalid -> no change
-    monkeypatch.setattr(wg.QColorDialog, "getColor", staticmethod(fake_get_color))
+    def fake_exec(dlg):
+        seen["non_native"] = dlg.testOption(
+            wg.QColorDialog.ColorDialogOption.DontUseNativeDialog)
+        seen["styled"] = bool(dlg.styleSheet())
+        return 0                              # cancelled -> no change
+    monkeypatch.setattr(wg.QColorDialog, "exec", fake_exec)
     w.editor.bg_btn._pick()
-    assert captured["options"] == wg.QColorDialog.ColorDialogOption.DontUseNativeDialog
+    assert seen["non_native"] is True
+    assert seen["styled"] is True

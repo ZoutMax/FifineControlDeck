@@ -212,6 +212,21 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
     # Single instance: hand off to a running copy instead of starting a second
     # one (a second copy could not open the already-claimed device anyway).
     if _signal_existing("quit" if quit_flag else "show"):
+        if quit_flag:
+            # Wait for the instance to actually exit: returning while it is
+            # still shutting down makes "quit && relaunch" a race — the new
+            # launch defers to the dying instance and the user keeps running
+            # stale code (bit us twice during 0.8.1 testing).
+            import time as _time
+            deadline = _time.monotonic() + 10.0
+            while _time.monotonic() < deadline:
+                if not _signal_existing("ping"):
+                    print("Running instance stopped.")
+                    return 0
+                _time.sleep(0.2)
+            print("Signalled quit, but the instance is still running "
+                  "after 10s.", file=sys.stderr)
+            return 1
         print("Signalled the running instance; exiting.")
         return 0
     if quit_flag:
@@ -280,6 +295,8 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
             cmd = bytes(conn.readAll()).decode(errors="ignore").strip()
             if cmd == "quit":
                 win._quit()
+            elif cmd == "ping":
+                pass                # liveness probe from a waiting --quit
             else:
                 win.show_and_raise()
         conn.close()

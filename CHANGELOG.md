@@ -4,6 +4,17 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.8.1] - Unreleased
+### Fixed
+- **Color picker readable in dark mode.** The dialog could open as the
+  platform's native chooser — a white window unreadable against the app's
+  themed text. The app now always builds Qt's own dialog with the dark
+  stylesheet applied directly to it (verified on GNOME/Wayland hardware).
+- **`--quit` waits for the instance to actually exit** (up to 10 s). It used
+  to return immediately while the old process was still shutting down, so
+  "quit && relaunch" raced and the relaunch deferred to the dying instance —
+  leaving stale code running.
+
 ## [0.8.0] - 2026-07-19
 ### Added
 - **Press-and-hold key actions** (#4): every key can carry a second action
