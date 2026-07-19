@@ -37,10 +37,15 @@ Available for **amd64** and **arm64** via the PPA and `.deb`.
 
 ## Status: Alpha
 
-The core is feature-complete and hardened, but it's early. Realistic expectations:
+The core is feature-complete and hardened, and every release is exercised on
+real hardware before it ships (see [`tools/e2e_live.py`](tools/e2e_live.py) —
+end-to-end journeys against an actual deck, run manually as a release gate, on
+top of the automated suite). It is still early software. Realistic
+expectations:
 
 - ✅ **Verified on hardware:** Stream Dock **293V3 family** (`3142:0060`, 15 keys) —
-  images, key input, brightness, folders, multi-actions, hotplug.
+  images, key input, brightness, folders, multi-actions, press-and-hold,
+  monitor keys, hotplug.
 - ⚠️ **Other Stream Dock models** are in the device table but **untested** here —
   key count / image size / mapping may need tuning in `DEVICE_PROFILE`.
 - ⚠️ **Knob/dial** support is implemented but **unverified** (no knob hardware).

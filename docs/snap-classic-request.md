@@ -45,5 +45,10 @@ as soon as classic is granted. Thanks!
 
 - [x] Forum account approved (zoutmax)
 - [x] Request posted 2026-07-18: https://forum.snapcraft.io/t/classic-confinement-request-fifine-control-deck/52368
-- [ ] Reviewer follow-ups answered
-- [ ] Classic granted → upload/release 0.7.0 classic build
+- [x] Reviewer replied (ogra): a device-control utility is **not** one of the
+      supported classic categories, and classic is "reserved for mature
+      projects" — the repo was a week old. Answered asking whether any strict
+      route to `/dev/hidraw` exists on classic desktops.
+- [ ] **Parked.** Revisit when the project has a longer track record; ask again
+      then whether a supported category fits, or whether a strict route has
+      appeared. Nothing is published to the store meanwhile.

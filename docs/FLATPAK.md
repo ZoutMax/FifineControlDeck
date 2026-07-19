@@ -71,7 +71,18 @@ for those actions to work (they run on the host, outside the sandbox).
 4. Once merged you get your own `flathub/io.github.zoutmax.FifineControlDeck`
    repo and the app appears on flathub.org.
 
-## Note
-The **Snap** already provides a zero-setup install on Ubuntu
-(`snap install fifine-control-deck`) — Flathub is the equivalent for the wider
-Flatpak ecosystem, worth doing once the confinement adaptation above is in place.
+## Status (2026-07)
+The Flathub submission is **parked**. The review raised two blockers: the app
+needs `--talk-name=org.freedesktop.Flatpak` (host commands via `flatpak-spawn`)
+which reviewers consider contrary to the point of sandboxing, and the project
+was judged too young ("insufficient development history"). See the closed
+[PR #9390](https://github.com/flathub/flathub/pull/9390).
+
+Revisit once the project has a longer track record, ideally alongside a design
+that needs less host access (portals where they exist). Until then the PPA and
+the `.deb` are the supported install paths; the Snap is parked for the same
+maturity reason (see [`SNAP.md`](SNAP.md)).
+
+Reviewer points to address before resubmitting:
+- drop `--talk-name=org.freedesktop.secrets` and use the Secret portal
+- keep the launcher upstream (already the case: `flatpak/` in the app repo)

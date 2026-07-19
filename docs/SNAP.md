@@ -1,5 +1,16 @@
 # Packaging as a Snap (Ubuntu App Center)
 
+> **Status (2026-07): parked, nothing published.** The deck needs
+> `/dev/hidraw`, which strict confinement cannot grant, so the working build is
+> a **classic** one — and classic confinement requires Canonical approval. The
+> request ([forum topic 52368](https://forum.snapcraft.io/t/classic-confinement-request-fifine-control-deck/52368))
+> was declined for now: a device-control utility is not on the supported
+> classic categories, and the project was judged too young. The old strict
+> revisions are unpublished (the store page 404s) because they could not drive
+> the deck at all. The name stays registered; revisit once the project has a
+> longer track record. Until then, install via the PPA or the `.deb`.
+> See also [`snap-classic-request.md`](snap-classic-request.md).
+
 The Ubuntu App Center surfaces the **Snap Store**, so publishing there means
 building a snap and uploading it. This directory (`snap/`) contains the
 packaging.

@@ -23,6 +23,7 @@ sha256sum fifine_deck/backend/StreamDock/Transport/TransportDLL/libtransport*.so
 
 ## Implications
 Because these are prebuilt binaries with no in-repo build, the project ships via
-community channels (Snap, Launchpad PPA, GitHub Releases, Flatpak). Building the
+community channels (Launchpad PPA and GitHub Releases today; Snap and Flatpak
+packaging exists but their store submissions are parked). Building the
 transport library from source would be a prerequisite for inclusion in the
 Debian/Ubuntu **main** archives.
