@@ -78,11 +78,33 @@ which reviewers consider contrary to the point of sandboxing, and the project
 was judged too young ("insufficient development history"). See the closed
 [PR #9390](https://github.com/flathub/flathub/pull/9390).
 
-Revisit once the project has a longer track record, ideally alongside a design
-that needs less host access (portals where they exist). Until then the PPA and
-the `.deb` are the supported install paths; the Snap is parked for the same
-maturity reason (see [`SNAP.md`](SNAP.md)).
+Revisit once the project has a longer track record (~October 2026). Until
+then the PPA and the `.deb` are the supported install paths; the Snap is
+parked for the same maturity reason (see [`SNAP.md`](SNAP.md)).
 
-Reviewer points to address before resubmitting:
-- drop `--talk-name=org.freedesktop.secrets` and use the Secret portal
-- keep the launcher upstream (already the case: `flatpak/` in the app repo)
+**Both technical reviewer points were addressed in 0.9.0:**
+
+- `--talk-name=org.freedesktop.secrets` is gone: the "Type password" action
+  now stores secrets through the **Secret portal**
+  (`org.freedesktop.portal.Secret`, see `fifine_deck/portal_secret.py`),
+  which needs no permission. The Flatpak bundles `cryptography` for the
+  encrypted store; deb/PPA installs keep using SecretService, unchanged.
+- `--talk-name=org.freedesktop.Flatpak` is gone from the default finish-args:
+  the manifest is **portals-first**. Host-side actions (launch app, shell
+  command, hotkeys, media/volume tools) detect the missing grant and print
+  the exact enable line instead of failing silently.
+- The launcher stays upstream (already the case: `flatpak/` in the app repo).
+
+## Enabling host actions (user opt-in)
+
+The whole point of a macro deck is controlling the host, so users who want
+host-side actions grant it once, consciously:
+
+```bash
+flatpak override --user --talk-name=org.freedesktop.Flatpak \
+    io.github.zoutmax.FifineControlDeck
+```
+
+(or turn on "Talk: org.freedesktop.Flatpak" in Flatseal), then restart the
+app. Without the grant the app still runs, drives the deck, and every deck-
+side action (pages, profiles, folders, brightness, monitor keys) works.

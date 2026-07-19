@@ -53,14 +53,58 @@ def _snap_is_classic() -> bool:
 IN_SNAP_CLASSIC = IN_SNAP and _snap_is_classic()
 
 
+# The portals-first Flatpak manifest no longer requests
+# org.freedesktop.Flatpak by default (Flathub review equates that grant with
+# no sandbox), so host access is an explicit USER decision. This is the exact
+# line the app tells them about when a host-side action needs it:
+HOST_ACCESS_HINT = (
+    "Host access is not enabled for this Flatpak, so actions that run host "
+    "commands (launch app, shell command, hotkeys, media and volume tools) "
+    "are unavailable. Enable it once with: flatpak override --user "
+    "--talk-name=org.freedesktop.Flatpak io.github.zoutmax.FifineControlDeck "
+    "(or turn on 'Talk: org.freedesktop.Flatpak' in Flatseal), then restart "
+    "the app."
+)
+
+_host_access: bool | None = None
+
+
+def host_access_available() -> bool:
+    """Inside Flatpak: can flatpak-spawn actually reach the host? Probed once
+    per process (the grant cannot change under a running sandbox). Outside a
+    sandbox this is trivially True."""
+    global _host_access
+    if not IN_FLATPAK:
+        return True
+    if _host_access is None:
+        try:
+            r = subprocess.run(_HOST_PREFIX + ["true"], timeout=5,
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+            _host_access = r.returncode == 0
+        except Exception:
+            _host_access = False
+        if not _host_access:
+            log.warning(HOST_ACCESS_HINT)
+    return _host_access
+
+
 def _host(args):
-    """Prefix an argv list so it runs on the host when inside a Flatpak sandbox."""
-    return _HOST_PREFIX + list(args) if IN_FLATPAK else list(args)
+    """Prefix an argv list so it runs on the host when inside a Flatpak
+    sandbox. Raises with the enable-me hint when the sandbox has no host
+    grant: a clear message in the action log beats a silent portal error."""
+    if IN_FLATPAK:
+        if not host_access_available():
+            raise RuntimeError(HOST_ACCESS_HINT)
+        return _HOST_PREFIX + list(args)
+    return list(args)
 
 
 def _has(cmd: str) -> bool:
     """Is `cmd` available? Inside Flatpak, probe the HOST — the sandbox PATH
     would not see host-side tools."""
+    if IN_FLATPAK and not host_access_available():
+        return False           # no route to the host: nothing is "available"
     if IN_FLATPAK:
         try:
             r = subprocess.run(
@@ -203,6 +247,8 @@ def _popen_detached(args, shell=False, host=False):
     """Launch a detached process. With host=True inside a Flatpak sandbox, run it
     on the host via flatpak-spawn so it can reach the user's real apps/scripts."""
     if IN_FLATPAK and host:
+        if not host_access_available():
+            raise RuntimeError(HOST_ACCESS_HINT)
         args = _HOST_PREFIX + (["sh", "-c", args] if shell else list(args))
         shell = False
     subprocess.Popen(

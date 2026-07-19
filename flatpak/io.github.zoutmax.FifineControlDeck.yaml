@@ -32,11 +32,17 @@ finish-args:
   # The deck is driven over /dev/hidraw (vendor HID protocol); there is no
   # narrower device permission that covers hidraw nodes.
   - --device=all
-  # Host helper tools (hotkeys via ydotool/xdotool, playerctl, wpctl,
-  # xdg-open) are launched via flatpak-spawn --host:
-  - --talk-name=org.freedesktop.Flatpak
-  # "Type password" action stores secrets in the keyring:
-  - --talk-name=org.freedesktop.secrets
+  # PORTALS-FIRST: no org.freedesktop.Flatpak and no org.freedesktop.secrets
+  # talk-names here, on purpose.
+  #  - Secrets ("Type password" action) go through the Secret portal
+  #    (org.freedesktop.portal.Secret), which needs no permission.
+  #  - Host helper tools (hotkeys via ydotool/xdotool, playerctl, wpctl,
+  #    launching apps/scripts) DO need host access; that is the user's call,
+  #    granted once with:
+  #      flatpak override --user --talk-name=org.freedesktop.Flatpak \
+  #          io.github.zoutmax.FifineControlDeck
+  #    (or Flatseal). Without it the app runs, drives the deck, and explains
+  #    exactly which actions need the grant and how to enable it.
 
 modules:
   # Pillow, psutil, pyudev as pinned offline sdists (PyQt6 is in the BaseApp).

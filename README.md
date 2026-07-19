@@ -30,10 +30,13 @@ Available for **amd64** and **arm64** via the PPA and `.deb`.
 
 > **Store availability:** Snap and Flathub submissions are on hold. The deck is
 > driven over `/dev/hidraw` with a vendor HID protocol, which strict snap
-> confinement cannot grant and which sits awkwardly with Flatpak sandboxing, and
-> both stores reasonably want more development history from a young project.
-> Both will be revisited once the project has a longer track record. The PPA and
-> `.deb` are fully supported and are the recommended way to install.
+> confinement cannot grant, and both stores reasonably want more development
+> history from a young project. Both will be revisited once the project has a
+> longer track record. The technical objections from the Flathub review are
+> already addressed: secrets go through the Secret portal and the manifest is
+> portals-first, with host access as a documented one-line user opt-in (see
+> [`docs/FLATPAK.md`](docs/FLATPAK.md)). The PPA and `.deb` are fully
+> supported and are the recommended way to install.
 
 ## Status: Alpha
 

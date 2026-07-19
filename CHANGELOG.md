@@ -4,6 +4,27 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - Unreleased
+Store-readiness release (#6): both technical objections from the Flathub
+review are resolved, in ways that also make the product better outside any
+store.
+
+### Added
+- **Secret-portal password storage (Flatpak).** Inside a sandbox the "Type
+  password" action now stores secrets via `org.freedesktop.portal.Secret`:
+  the portal hands the app a master secret and values live encrypted
+  (HKDF-SHA256 + Fernet) in `secrets.enc`, written 0600 with the same
+  fsync-before-rename durability as the config. No permission needed, which
+  removes the `--talk-name=org.freedesktop.secrets` finish-arg. deb/PPA
+  installs keep using the OS keyring exactly as before, and secrets stored
+  before the upgrade keep resolving (reads consult both backends).
+- **Portals-first Flatpak manifest.** The default finish-args no longer
+  request `org.freedesktop.Flatpak` (host command execution): that grant is
+  now the user's explicit one-line opt-in (documented in `docs/FLATPAK.md`).
+  Host-side actions detect a missing grant once per process and print the
+  exact enable command instead of failing silently; deck-side actions all
+  work without it.
+
 ## [0.8.2] - 2026-07-20
 Hardening release: every finding from a 13-point adversarial audit of 0.8.1,
 fixed with a regression test each. None of these affect normal day-to-day use;

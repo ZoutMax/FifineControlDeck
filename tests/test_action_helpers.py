@@ -226,6 +226,7 @@ def test_popen_routes_shell_commands_to_the_host_in_flatpak(popen, monkeypatch):
     """Inside the sandbox the user's real apps live on the host, so a shell
     command must be handed to flatpak-spawn rather than run with shell=True."""
     monkeypatch.setattr(actions, "IN_FLATPAK", True)
+    monkeypatch.setattr(actions, "_host_access", True)   # grant present
     actions._popen_detached("gimp ~/a.png", shell=True, host=True)
     assert popen["args"] == ["flatpak-spawn", "--host", "sh", "-c", "gimp ~/a.png"]
     assert popen["shell"] is False
