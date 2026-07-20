@@ -211,7 +211,18 @@ class DeviceManager:
 
         while True:
             try:
-                device = monitor.poll(timeout=1)
+                # LOCAL PATCH (fifine Control Deck, 2026-07-20): the upstream
+                # SDK polls with timeout=1, so on every idle second it runs a
+                # full USB HID enumeration as a safety net. Each enumeration
+                # costs ~105 ms here, which measured out at ~7% of a CPU core
+                # burned continuously by an otherwise idle app (4456 CPU
+                # seconds over one 18-hour run).
+                #
+                # pyudev already delivers add/remove events, and poll() returns
+                # the instant one arrives, so hotplug stays immediate. Only the
+                # redundant rescan is throttled, from once a second to once a
+                # minute. See docs/PROVENANCE.md.
+                device = monitor.poll(timeout=60)
                 if device is None:
                     self._remove_missing_devices(products)
                     self._add_missing_devices(products)

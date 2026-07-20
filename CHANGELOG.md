@@ -4,7 +4,7 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
-## [0.10.0] - Unreleased
+## [0.10.0] - 2026-07-20
 Sandbox-native actions. Media and keystrokes no longer depend on host helper
 binaries, which makes the app work in more places, not only in a Flatpak.
 
@@ -22,6 +22,17 @@ binaries, which makes the app work in more places, not only in a Flatpak.
   still preferred, so users who have one see no change and no consent
   prompt. Verified end to end on GNOME/Wayland hardware: consent granted,
   restore token persisted, keystroke injected.
+
+### Fixed
+- **The app no longer burns a CPU core doing nothing.** The vendored SDK's
+  hotplug listener re-enumerated the entire USB HID bus on every idle
+  second as a safety net behind pyudev. Each scan costs about 105 ms, which
+  measured as **6.7% of a CPU core burned continuously** by an idle app
+  (4456 CPU seconds over an 18 hour run on the dev machine). The redundant
+  rescan is throttled to once a minute; pyudev events still arrive
+  instantly, so hotplug is unaffected. Measured after the fix on the same
+  machine: **0.73% of a core, roughly 9x less**. Laptop users get the
+  battery life back.
 
 ### Changed
 - The Flatpak manifest asks for `--talk-name=org.mpris.MediaPlayer2.*` (the

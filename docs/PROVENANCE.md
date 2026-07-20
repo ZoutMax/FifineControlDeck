@@ -21,6 +21,18 @@ Verify locally:
 sha256sum fifine_deck/backend/StreamDock/Transport/TransportDLL/libtransport*.so
 ```
 
+## Local patches to the vendored SDK
+
+The vendored tree is upstream MIT code with one deliberate change, kept
+small and commented in place so it survives a future re-vendor:
+
+- `StreamDock/DeviceManager.py`, `_listen_linux`: the hotplug poll timeout
+  went from 1 s to 60 s. Upstream re-enumerates the whole USB HID bus on
+  every idle second as a safety net behind pyudev; each scan costs ~105 ms,
+  which measured as ~7% of a CPU core burned continuously by an idle app.
+  pyudev events still arrive immediately (poll returns as soon as one does),
+  so only the redundant rescan is throttled.
+
 ## Implications
 Because these are prebuilt binaries with no in-repo build, the project ships via
 community channels (Launchpad PPA and GitHub Releases today; Snap and Flatpak
