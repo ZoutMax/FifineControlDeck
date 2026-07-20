@@ -90,6 +90,20 @@ parked for the same maturity reason (see [`SNAP.md`](SNAP.md)).
 > Also note a `flatpak-builder` run leaves a multi-GB `.flatpak-builder/`
 > cache next to the manifest; delete it when finished.
 
+**Sandbox-native verification (2026-07-20, second pass).** Built from the
+working tree and exercised inside the real sandbox with **no host access at
+all** (`flatpak-spawn` unavailable, confirmed at runtime):
+
+| capability | route | result |
+|---|---|---|
+| volume | `pactl` shipped in the KDE runtime, over `--socket=pulseaudio` | reads and sets the real sink |
+| media | MPRIS on the session bus (`--talk-name=org.mpris.MediaPlayer2.*`) | players visible, commands accepted |
+| hotkeys / typing | `org.freedesktop.portal.RemoteDesktop` | session established, keystroke injected, restore token persisted |
+| passwords | `org.freedesktop.portal.Secret` | encrypted roundtrip, 0600 store |
+
+Only *launching host apps* and *arbitrary shell commands* still need the
+opt-in host grant. Everything else works out of the box in the sandbox.
+
 **Verified by a real sandbox build (2026-07-20).** `flatpak-builder` build
 of the 0.9.0 manifest, installed and exercised:
 
