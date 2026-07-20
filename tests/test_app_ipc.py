@@ -45,7 +45,7 @@ def test_instance_lock_is_exclusive_and_releases(tmp_path, monkeypatch):
 def test_autostart_cli_delegates_to_running_instance(monkeypatch):
     """0.8.1 audit: --enable/--disable-autostart while the GUI runs got
     clobbered by the GUI's next debounced autosave (its in-memory config
-    still held the old value) — under Flatpak the desync was permanent.
+    still held the old value)
     The CLI must hand the request to the running instance instead."""
     sent = []
     monkeypatch.setattr(app, "_signal_existing",

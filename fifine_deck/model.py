@@ -17,9 +17,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
-# XDG_CONFIG_HOME matters: under Flatpak it points into ~/.var/app/<id>/,
-# and hardcoding ~/.config there writes into the sandbox's throwaway home —
-# the config would silently vanish on every restart.
 CONFIG_DIR = os.path.join(
     os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
     "fifine-control-deck")
@@ -255,10 +252,6 @@ class DeckConfig:
     brightness: int = 80
     glow: bool = True          # glow a key on the device while it is pressed
     snap_hint_dismissed: bool = False   # user ticked "don't show again" on the snap USB hint
-    # Flatpak only: last granted portal autostart state. The Background portal
-    # has no query API, so this is the toggle's memory between runs (outside
-    # Flatpak the autostart .desktop file's existence is the truth instead).
-    autostart_enabled: bool = False
     profiles: list[Profile] = field(default_factory=lambda: [Profile()])
     active_profile_id: str = ""
 
@@ -283,7 +276,6 @@ class DeckConfig:
             "brightness": self.brightness,
             "glow": self.glow,
             "snap_hint_dismissed": self.snap_hint_dismissed,
-            "autostart_enabled": self.autostart_enabled,
             "active_profile_id": self.active_profile_id,
             "profiles": [p.to_dict() for p in self.profiles],
         }
@@ -303,7 +295,6 @@ class DeckConfig:
             brightness=brightness,
             glow=bool(d.get("glow", True)),
             snap_hint_dismissed=bool(d.get("snap_hint_dismissed", False)),
-            autostart_enabled=bool(d.get("autostart_enabled", False)),
             profiles=profiles,
             active_profile_id=_as_str(d.get("active_profile_id"), ""),
         )

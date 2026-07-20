@@ -32,5 +32,3 @@ dist/
 /tmp/
 rotated_*_image_*.jpg
 
-# local test builds (flatpak-builder), never committed
-flatpak/local-build.yaml

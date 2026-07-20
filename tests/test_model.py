@@ -190,9 +190,8 @@ def test_default_config_path_is_resolved_at_call_time(tmp_path, monkeypatch):
 
 
 def test_config_dir_honors_xdg_config_home(monkeypatch):
-    """Under Flatpak XDG_CONFIG_HOME points into ~/.var/app/<id>/; hardcoding
-    ~/.config there writes into the sandbox's throwaway home and the config
-    vanishes on restart (found during Flathub packaging)."""
+    """CONFIG_DIR must follow XDG_CONFIG_HOME rather than hardcoding
+    ~/.config, so a custom config location is respected."""
     import importlib
     from fifine_deck import model as m
     monkeypatch.setenv("XDG_CONFIG_HOME", "/xdg/base")

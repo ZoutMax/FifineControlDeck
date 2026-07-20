@@ -107,7 +107,6 @@ def _deb_version():
 
 @pytest.mark.parametrize("rel", [
     "packaging/io.github.zoutmax.FifineControlDeck.metainfo.xml",
-    "flatpak/io.github.zoutmax.FifineControlDeck.metainfo.xml",
 ])
 def test_metainfo_advertises_the_shipped_version(rel):
     """AppStream drives what GNOME Software / Ubuntu App Center shows. Pinned
@@ -178,8 +177,6 @@ def test_psutil_is_a_dependency_on_every_install_path():
     assert "python3-psutil" in _read("debian/control")
     assert "python3-psutil" in _read("packaging/build-deb.sh")
     assert re.search(r"^\s*- psutil$", _read("snap/snapcraft.yaml"), re.M)
-    assert "psutil" in _read("flatpak/io.github.zoutmax.FifineControlDeck.yaml")
-    assert "psutil" in _read("docs/FLATPAK.md")
     assert "python3-psutil" in _read("CONTRIBUTING.md")
 
 
@@ -222,39 +219,10 @@ def test_release_sh_refuses_a_tag_pointing_elsewhere():
 
 
 # ---------------------------------------------------------------------------
-# 0.9.0: portals-first Flatpak manifest (Flathub review requirements)
-# ---------------------------------------------------------------------------
-def test_flatpak_manifest_is_portals_first():
-    """The Flathub review rejected --talk-name=org.freedesktop.Flatpak
-    (equated with no sandbox) and --talk-name=org.freedesktop.secrets (the
-    Secret portal is the sanctioned route). Neither may creep back into the
-    default finish-args: host access is the user's explicit Flatseal grant."""
-    with open(os.path.join(ROOT, "flatpak",
-                           "io.github.zoutmax.FifineControlDeck.yaml")) as f:
-        text = f.read()
-    args = [ln.strip() for ln in text.splitlines()
-            if ln.strip().startswith("- --")]
-    assert not any("talk-name=org.freedesktop.Flatpak" in a for a in args)
-    assert not any("talk-name=org.freedesktop.secrets" in a for a in args)
-
-
-def test_flatpak_bundles_cryptography_for_the_secret_portal():
-    """portal_secret encrypts with Fernet: the sandbox must bundle the
-    cryptography package (both arches) or the portal store silently falls
-    back to plaintext-in-config."""
-    import json as _json
-    with open(os.path.join(ROOT, "flatpak", "python3-deps.json")) as f:
-        d = _json.load(f)
-    mod = next((m for m in d["modules"] if m["name"] == "python3-cryptography"), None)
-    assert mod is not None, "python3-cryptography module missing from deps"
-    arch_sets = [tuple(s["only-arches"]) for s in mod["sources"] if "only-arches" in s]
-    assert ("x86_64",) in arch_sets and ("aarch64",) in arch_sets
-
-
 def test_deb_dependencies_are_desktop_agnostic():
     """The app must run on any Debian-family desktop (KDE, XFCE, LXQt, MATE,
-    sway...), not just GNOME: Qt UI, XDG autostart, SecretService/portal for
-    secrets, MPRIS for media, wpctl/pactl for audio. No desktop environment's
+    sway...), not just GNOME: Qt UI, XDG autostart, SecretService for secrets,
+    playerctl for media, wpctl/pactl for audio. No desktop environment's
     packages may creep into the dependency chain."""
     with open(os.path.join(ROOT, "debian", "control")) as f:
         control = f.read().lower()

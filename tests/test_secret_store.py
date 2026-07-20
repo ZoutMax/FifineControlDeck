@@ -51,7 +51,7 @@ def test_get_unknown_id_returns_none(monkeypatch):
 
 class _LockedKeyring:
     """A backend that errors on every call — a locked SecretService, or D-Bus
-    missing (headless session, some flatpak/snap setups)."""
+    missing (e.g. a headless session)."""
 
     def set_password(self, *a):
         raise RuntimeError("SecretService is locked")
@@ -87,72 +87,3 @@ def test_keyring_import_failure_is_contained(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", fake_import)
     assert secret_store._keyring() is None
     assert secret_store.available() is False
-
-
-# ---------------------------------------------------------------------------
-# 0.9.0: Secret-portal backend chained before the keyring (Flatpak)
-# ---------------------------------------------------------------------------
-class _FakePortal:
-    def __init__(self):
-        self.d = {}
-
-    def store(self, sid, pw):
-        self.d[sid] = pw
-        return True
-
-    def get(self, sid):
-        return self.d.get(sid)
-
-    def delete(self, sid):
-        self.d.pop(sid, None)
-
-
-def test_portal_backend_preferred_when_active(monkeypatch):
-    portal = _FakePortal()
-    kr = _FakeKeyring()
-    monkeypatch.setattr(secret_store, "_portal", lambda: portal)
-    monkeypatch.setattr(secret_store, "_keyring", lambda: kr)
-    assert secret_store.available() is True
-    assert secret_store.store("pw-a", "s3cret!") is True
-    assert portal.d == {"pw-a": "s3cret!"}     # went to the portal store
-    assert kr.d == {}                          # keyring untouched
-    assert secret_store.get("pw-a") == "s3cret!"
-    secret_store.delete("pw-a")
-    assert portal.d == {}
-
-
-def test_portal_available_even_without_keyring(monkeypatch):
-    monkeypatch.setattr(secret_store, "_portal", lambda: _FakePortal())
-    monkeypatch.setattr(secret_store, "_keyring", lambda: None)
-    assert secret_store.available() is True
-    assert secret_store.store("pw-a", "x") is True
-
-
-def test_get_falls_back_to_keyring_for_pre_upgrade_secrets(monkeypatch):
-    """A secret stored via SecretService before the portal backend existed
-    must keep resolving after the upgrade: gets consult BOTH backends."""
-    portal = _FakePortal()
-    kr = _FakeKeyring()
-    kr.set_password(secret_store.SERVICE, "pw-old", "legacy!")
-    monkeypatch.setattr(secret_store, "_portal", lambda: portal)
-    monkeypatch.setattr(secret_store, "_keyring", lambda: kr)
-    assert secret_store.get("pw-old") == "legacy!"
-
-
-def test_delete_clears_both_backends(monkeypatch):
-    portal = _FakePortal()
-    portal.d["pw-x"] = "a"
-    kr = _FakeKeyring()
-    kr.set_password(secret_store.SERVICE, "pw-x", "a")
-    monkeypatch.setattr(secret_store, "_portal", lambda: portal)
-    monkeypatch.setattr(secret_store, "_keyring", lambda: kr)
-    secret_store.delete("pw-x")
-    assert portal.d == {} and kr.d == {}
-
-
-def test_portal_never_activates_outside_flatpak(monkeypatch):
-    """On deb/PPA installs the portal path must be inert: IN_FLATPAK is the
-    gate, before any import or D-Bus work happens."""
-    from fifine_deck import actions
-    monkeypatch.setattr(actions, "IN_FLATPAK", False)
-    assert secret_store._portal() is None

@@ -83,7 +83,7 @@ jobs:
 
       - name: Validate metadata (AppStream + desktop)
         run: |
-          appstreamcli validate packaging/*.metainfo.xml flatpak/*.metainfo.xml
+          appstreamcli validate packaging/*.metainfo.xml
           desktop-file-validate packaging/*.desktop
 
       - name: Build .deb

@@ -21,7 +21,6 @@ body:
         - PPA (apt)
         - .deb
         - From source
-        - Flatpak
     validations:
       required: true
   - type: textarea

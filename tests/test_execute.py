@@ -50,9 +50,9 @@ def rec(monkeypatch):
 # -- OS-side actions --------------------------------------------------------
 
 @pytest.mark.parametrize("t", ["launch_app", "run_command"])
-def test_launch_and_run_spawn_detached_on_host(rec, t):
+def test_launch_and_run_spawn_detached(rec, t):
     actions.execute(Action(t, {"command": "gimp"}))
-    assert rec == [("_popen_detached", ("gimp",), {"shell": True, "host": True})]
+    assert rec == [("_popen_detached", ("gimp",), {"shell": True})]
 
 
 @pytest.mark.parametrize("t", ["launch_app", "run_command", "open_url"])

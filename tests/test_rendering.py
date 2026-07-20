@@ -139,7 +139,7 @@ def test_label_renders_without_an_icon():
 
 
 def test_font_falls_back_when_no_font_file_exists(monkeypatch):
-    """Bundled fonts differ across distros/snap/flatpak; a missing one must
+    """Bundled fonts differ across distros; a missing one must
     degrade to PIL's default rather than crash every key render."""
     monkeypatch.setattr(rendering, "_FONT_CANDIDATES", ["/nonexistent/none.ttf"])
     rendering._font.cache_clear()

@@ -35,7 +35,7 @@ small and commented in place so it survives a future re-vendor:
 
 ## Implications
 Because these are prebuilt binaries with no in-repo build, the project ships via
-community channels (Launchpad PPA and GitHub Releases today; Snap and Flatpak
+community channels (Launchpad PPA and GitHub Releases today; Snap
 packaging exists but their store submissions are parked). Building the
 transport library from source would be a prerequisite for inclusion in the
 Debian/Ubuntu **main** archives.

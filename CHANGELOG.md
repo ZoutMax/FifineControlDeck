@@ -4,24 +4,7 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
-## [0.10.0] - 2026-07-20
-Sandbox-native actions. Media and keystrokes no longer depend on host helper
-binaries, which makes the app work in more places, not only in a Flatpak.
-
-### Added
-- **Media control over MPRIS.** The play/pause, next, previous and stop
-  actions now talk directly to whatever player is running (Spotify, VLC,
-  mpv, browsers) on the session bus. `playerctl` is no longer required and
-  stays only as a fallback, so media keys work on a fresh install with
-  nothing extra installed.
-- **Keystroke injection through the RemoteDesktop portal.** When no
-  xdotool/ydotool/wtype is available, hotkeys and typed text are injected by
-  the compositor after a one-time consent. This is the only route inside a
-  sandbox, and it also fixes a plain Wayland desktop where ydotool was never
-  set up (it needs a daemon plus uinput access). A working helper tool is
-  still preferred, so users who have one see no change and no consent
-  prompt. Verified end to end on GNOME/Wayland hardware: consent granted,
-  restore token persisted, keystroke injected.
+## [0.10.0] - Unreleased
 
 ### Fixed
 - **The app no longer burns a CPU core doing nothing.** The vendored SDK's
@@ -34,31 +17,8 @@ binaries, which makes the app work in more places, not only in a Flatpak.
   machine: **0.73% of a core, roughly 9x less**. Laptop users get the
   battery life back.
 
-### Changed
-- The Flatpak manifest asks for `--talk-name=org.mpris.MediaPlayer2.*` (the
-  standard media-control permission) and needs no host access for hotkeys,
-  typing or media.
-
 ## [0.9.0] - 2026-07-20
-Store-readiness release (#6): both technical objections from the Flathub
-review are resolved, in ways that also make the product better outside any
-store.
-
-### Added
-- **Secret-portal password storage (Flatpak).** Inside a sandbox the "Type
-  password" action now stores secrets via `org.freedesktop.portal.Secret`:
-  the portal hands the app a master secret and values live encrypted
-  (HKDF-SHA256 + Fernet) in `secrets.enc`, written 0600 with the same
-  fsync-before-rename durability as the config. No permission needed, which
-  removes the `--talk-name=org.freedesktop.secrets` finish-arg. deb/PPA
-  installs keep using the OS keyring exactly as before, and secrets stored
-  before the upgrade keep resolving (reads consult both backends).
-- **Portals-first Flatpak manifest.** The default finish-args no longer
-  request `org.freedesktop.Flatpak` (host command execution): that grant is
-  now the user's explicit one-line opt-in (documented in `docs/FLATPAK.md`).
-  Host-side actions detect a missing grant once per process and print the
-  exact enable command instead of failing silently; deck-side actions all
-  work without it.
+Packaging and store-submission work; no functional changes for deb/PPA users.
 
 ## [0.8.2] - 2026-07-20
 Hardening release: every finding from a 13-point adversarial audit of 0.8.1,
@@ -137,10 +97,6 @@ they cover data safety, crash recovery, and multi-instance edge cases.
   the target to `chip` / `chip:label`, e.g. `nvme:Composite`) as new metrics,
   plus a simple **clock key** (time + date; shows seconds at refresh
   intervals under 5 s).
-- **Flatpak: "Start on login" now works.** Inside the sandbox the toggle used
-  to write a `.desktop` file into the sandbox home — a silent no-op. It now
-  asks the XDG **Background portal**; if the desktop denies the request the
-  toggle reverts and says why instead of pretending.
 ### Changed
 - **Gauge face is readable at arm's length**: the value text grew from 20% to
   26% of the key size and the metric label moved out of the arc into the
@@ -184,12 +140,6 @@ they cover data safety, crash recovery, and multi-instance edge cases.
   edit, so the chosen icon was overwritten in the same moment. The icon now
   follows the action only when the action actually changes; custom File… icons
   were never affected.
-- **Config no longer lost under Flatpak**: `XDG_CONFIG_HOME` is honored, so the
-  configuration persists instead of being written into the sandbox's throwaway
-  home.
-- **Key text no longer renders tiny on Fedora/Flatpak runtimes**: the font
-  search now covers their DejaVu/Liberation layouts instead of silently falling
-  back to a bitmap font.
 
 ## [0.6.0] - 2026-07-17
 ### Added
@@ -312,7 +262,6 @@ they cover data safety, crash recovery, and multi-instance edge cases.
 - AppStream metainfo for the `.deb` (rich GNOME Software / App Center listing).
 - GitHub Pages landing page; **tag→release** GitHub Actions workflow.
 - **ruff** lint in CI (replacing flake8).
-- Flatpak packaging scaffold with sandbox-aware action routing.
 - arm64 + Ubuntu 26.04 (resolute) PPA builds.
 ### Changed
 - Slimmer packages (listing assets excluded from the payload).

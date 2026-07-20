@@ -66,7 +66,7 @@
     </release>
     <release version="0.7.0" date="2026-07-18">
       <description>
-        <p>Monitor keys round 2 (GPU load, temperatures, clock), gauge legibility, Flatpak autostart via the Background portal</p>
+        <p>Monitor keys round 2 (GPU load, temperatures, clock), gauge legibility</p>
       </description>
     </release>
     <release version="0.6.2" date="2026-07-18">
@@ -76,7 +76,7 @@
     </release>
     <release version="0.6.1" date="2026-07-18">
       <description>
-        <p>Library icon picker fix, plus Flatpak config persistence and font fallback</p>
+        <p>Library icon picker fix, plus font fallback</p>
       </description>
     </release>
     <release version="0.6.0" date="2026-07-17">

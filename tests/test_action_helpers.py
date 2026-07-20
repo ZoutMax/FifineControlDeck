@@ -172,19 +172,12 @@ def test_type_text_needs_a_tool(ran, monkeypatch):
 # -- media ------------------------------------------------------------------
 
 def test_media_uses_playerctl(ran, monkeypatch):
-    """playerctl is the FALLBACK since 0.10.0: MPRIS on the session bus is
-    tried first (no helper needed, works sandboxed). Here no MPRIS player
-    answers, so the helper must still be used."""
-    from fifine_deck import mpris
-    monkeypatch.setattr(mpris, "control", lambda cmd: False)
     monkeypatch.setattr(actions, "HAS_PLAYERCTL", True)
     actions._media("play-pause")
     assert ran == [["playerctl", "play-pause"]]
 
 
 def test_media_without_playerctl_does_nothing(ran, monkeypatch):
-    from fifine_deck import mpris
-    monkeypatch.setattr(mpris, "control", lambda cmd: False)
     monkeypatch.setattr(actions, "HAS_PLAYERCTL", False)
     actions._media("play-pause")
     assert ran == []
@@ -223,29 +216,10 @@ def popen(monkeypatch):
 
 def test_popen_detaches_so_children_outlive_the_app(popen, monkeypatch):
     """start_new_session keeps a launched app alive after the deck app exits."""
-    monkeypatch.setattr(actions, "IN_FLATPAK", False)
     actions._popen_detached(["xdg-open", "https://example.com"])
     assert popen["args"] == ["xdg-open", "https://example.com"]
     assert popen["start_new_session"] is True
 
-
-def test_popen_routes_shell_commands_to_the_host_in_flatpak(popen, monkeypatch):
-    """Inside the sandbox the user's real apps live on the host, so a shell
-    command must be handed to flatpak-spawn rather than run with shell=True."""
-    monkeypatch.setattr(actions, "IN_FLATPAK", True)
-    monkeypatch.setattr(actions, "_host_access", True)   # grant present
-    actions._popen_detached("gimp ~/a.png", shell=True, host=True)
-    assert popen["args"] == ["flatpak-spawn", "--host", "sh", "-c", "gimp ~/a.png"]
-    assert popen["shell"] is False
-
-
-def test_popen_leaves_non_host_calls_alone_in_flatpak(popen, monkeypatch):
-    monkeypatch.setattr(actions, "IN_FLATPAK", True)
-    actions._popen_detached(["xdg-open", "u"])          # host=False
-    assert popen["args"] == ["xdg-open", "u"]
-
-
-# -- _run itself ------------------------------------------------------------
 
 def test_run_swallows_helper_failures(monkeypatch):
     """A hung or missing helper must never escape into the reader thread."""

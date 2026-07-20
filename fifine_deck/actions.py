@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shlex
 import shutil
 import subprocess
 import time
@@ -23,12 +22,6 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 IS_WAYLAND = bool(os.environ.get("WAYLAND_DISPLAY")) or \
     os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
-
-# Flatpak sandbox: host helper tools (ydotool, playerctl, wpctl) and the user's
-# real apps live OUTSIDE the sandbox, so they must be reached via
-# `flatpak-spawn --host`. Detected once at import.
-IN_FLATPAK = os.path.exists("/.flatpak-info") or bool(os.environ.get("FLATPAK_ID"))
-_HOST_PREFIX = ["flatpak-spawn", "--host"]
 
 # Confined snap: USB access needs the raw-usb / hardware-observe interfaces,
 # which are manual-connect by default (a snap cannot connect them to itself),
@@ -53,78 +46,8 @@ def _snap_is_classic() -> bool:
 IN_SNAP_CLASSIC = IN_SNAP and _snap_is_classic()
 
 
-# The portals-first Flatpak manifest no longer requests
-# org.freedesktop.Flatpak by default (Flathub review equates that grant with
-# no sandbox), so host access is an explicit USER decision. This is the exact
-# line the app tells them about when a host-side action needs it:
-HOST_ACCESS_HINT = (
-    "Host access is not enabled for this Flatpak, so actions that run host "
-    "commands (launch app, shell command, hotkeys, media and volume tools) "
-    "are unavailable. Enable it once with: flatpak override --user "
-    "--talk-name=org.freedesktop.Flatpak io.github.zoutmax.FifineControlDeck "
-    "(or turn on 'Talk: org.freedesktop.Flatpak' in Flatseal), then restart "
-    "the app."
-)
-
-_host_access: bool | None = None
-
-
-def host_access_available() -> bool:
-    """Inside Flatpak: can flatpak-spawn actually reach the host? Probed once
-    per process (the grant cannot change under a running sandbox). Outside a
-    sandbox this is trivially True."""
-    global _host_access
-    if not IN_FLATPAK:
-        return True
-    if _host_access is None:
-        try:
-            r = subprocess.run(_HOST_PREFIX + ["true"], timeout=5,
-                               stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL)
-            _host_access = r.returncode == 0
-        except Exception:
-            _host_access = False
-        if not _host_access:
-            log.warning(HOST_ACCESS_HINT)
-    return _host_access
-
-
-def _host(args):
-    """Prefix an argv list so it runs on the host when inside a Flatpak
-    sandbox. Raises with the enable-me hint when the sandbox has no host
-    grant: a clear message in the action log beats a silent portal error."""
-    if IN_FLATPAK:
-        if not host_access_available():
-            raise RuntimeError(HOST_ACCESS_HINT)
-        return _HOST_PREFIX + list(args)
-    return list(args)
-
-
-# Tools that do their job correctly from INSIDE the sandbox, because what
-# they drive is reachable through a granted socket rather than the host
-# filesystem: the audio CLIs talk to PipeWire/PulseAudio over
-# --socket=pulseaudio. Everything else (input injection, window management,
-# launching the user's apps) is only meaningful on the host.
-SANDBOX_CAPABLE = frozenset({"pactl", "wpctl"})
-
-
 def _has(cmd: str) -> bool:
-    """Is `cmd` usable? Inside Flatpak, look in the SANDBOX first for the
-    tools that work there (the KDE runtime ships pactl, so volume control
-    needs no host access at all), then probe the HOST for the rest."""
-    if IN_FLATPAK and cmd in SANDBOX_CAPABLE and shutil.which(cmd):
-        return True
-    if IN_FLATPAK and not host_access_available():
-        return False           # no route to the host: nothing else is usable
-    if IN_FLATPAK:
-        try:
-            r = subprocess.run(
-                _HOST_PREFIX + ["sh", "-c", "command -v " + shlex.quote(cmd)],
-                timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            return r.returncode == 0
-        except Exception:
-            return False
+    """Is `cmd` available on PATH?"""
     return shutil.which(cmd) is not None
 
 
@@ -254,14 +177,8 @@ def default_icon_for(action) -> tuple[str, str]:
     return ACTION_DEFAULT_ICON.get(t, ("", ""))
 
 
-def _popen_detached(args, shell=False, host=False):
-    """Launch a detached process. With host=True inside a Flatpak sandbox, run it
-    on the host via flatpak-spawn so it can reach the user's real apps/scripts."""
-    if IN_FLATPAK and host:
-        if not host_access_available():
-            raise RuntimeError(HOST_ACCESS_HINT)
-        args = _HOST_PREFIX + (["sh", "-c", args] if shell else list(args))
-        shell = False
+def _popen_detached(args, shell=False):
+    """Launch a detached process (survives the app exiting)."""
     subprocess.Popen(
         args, shell=shell, start_new_session=True,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
@@ -282,7 +199,7 @@ def _run(args, input_text: bytes | None = None, **kw):
     kw.setdefault("timeout", 8)
     kw.setdefault("stderr", subprocess.DEVNULL)
     try:
-        subprocess.run(_host(args), input=input_text, **kw)
+        subprocess.run(args, input=input_text, **kw)
     except Exception as e:
         log.warning("command failed: %s", e)
 
@@ -327,18 +244,9 @@ def _ydotool_keycodes(combo: str):
 def _send_hotkey(combo: str) -> None:
     """Send a key combination like 'ctrl+shift+m'. Best-effort across tools."""
     combo = combo.strip()
-    if not combo:
-        return
-    if not KEY_TOOL:
-        # No helper tool: ask the compositor to inject the keys for us.
-        # This is the only route inside a Flatpak, and it also rescues a
-        # plain Wayland desktop where ydotool was never set up.
-        from . import portal_input
-        codes = _ydotool_keycodes(combo)
-        if codes and portal_input.send_combo(codes):
-            return
-        log.warning("no keystroke tool (install xdotool / ydotool / wtype) "
-                    "and the RemoteDesktop portal is unavailable")
+    if not combo or not KEY_TOOL:
+        if not KEY_TOOL:
+            log.warning("no keystroke tool (install xdotool / ydotool / wtype)")
         return
     if KEY_TOOL == "xdotool":
         _run(["xdotool", "key", "--clearmodifiers", combo],
@@ -385,10 +293,6 @@ def _type_text(text: str) -> None:
     Return, which is what the multi-line editor produces.
     """
     if not KEY_TOOL:
-        from . import portal_input
-        if not portal_input.type_text(text):
-            log.warning("no keystroke tool and the RemoteDesktop portal is "
-                        "unavailable: cannot type")
         return
     data = text.encode()
     if KEY_TOOL == "xdotool":
@@ -415,20 +319,10 @@ def _close_app(target: str) -> None:
 
 
 def _media(cmd: str) -> None:
-    """Control the active player.
-
-    MPRIS over D-Bus first: every modern player speaks it, so this works with
-    no helper installed and inside a sandbox (where there is no host
-    playerctl and reaching the host is the permission Flathub rejects).
-    playerctl stays as the fallback for the rare player that only it knows.
-    """
-    from . import mpris
-    if mpris.control(cmd):
-        return
     if HAS_PLAYERCTL:
         _run(["playerctl", cmd], stderr=subprocess.DEVNULL)
     else:
-        log.warning("media control found no MPRIS player (and no playerctl)")
+        log.warning("media control needs 'playerctl'")
 
 
 SINK = "@DEFAULT_AUDIO_SINK@"
@@ -468,11 +362,11 @@ def execute(action, context: ActionContext | None = None) -> None:
         elif t == "launch_app":
             cmd = p.get("command", "").strip()
             if cmd:
-                _popen_detached(cmd, shell=True, host=True)
+                _popen_detached(cmd, shell=True)
         elif t == "run_command":
             cmd = p.get("command", "").strip()
             if cmd:
-                _popen_detached(cmd, shell=True, host=True)
+                _popen_detached(cmd, shell=True)
         elif t == "open_url":
             url = p.get("url", "").strip()
             if url:
@@ -535,7 +429,6 @@ def environment_summary() -> str:
     return (f"session={'wayland' if IS_WAYLAND else 'x11'} "
             f"audio={AUDIO or 'none'} keytool={KEY_TOOL or 'none'} "
             f"playerctl={'yes' if HAS_PLAYERCTL else 'no'}"
-            + (" [flatpak]" if IN_FLATPAK else "")
             + (" [snap]" if IN_SNAP else ""))
 
 

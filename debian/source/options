@@ -39,5 +39,3 @@ tar-ignore = snapcraft-*.txt
 tar-ignore = *.orig
 tar-ignore = *.rej
 tar-ignore = *~
-tar-ignore = .flatpak-builder
-tar-ignore = flatpak/.flatpak-builder

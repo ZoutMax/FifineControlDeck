@@ -29,7 +29,6 @@ dir — please keep it that way).
 - **.deb:** `./packaging/build-deb.sh <version> <amd64|arm64>`
 - **snap:** `snapcraft pack`
 - **PPA source:** `debuild -S` — see [`docs/PPA.md`](docs/PPA.md)
-- **Flatpak:** see [`docs/FLATPAK.md`](docs/FLATPAK.md)
 
 ## Releasing
 `./release.sh <version> "what changed"` bumps the snap + deb version, tags, and

@@ -46,8 +46,7 @@ version, msg = os.environ["VERSION"], os.environ["MSG"]
 entry = ('    <release version="%s" date="%s">\n'
          '      <description>\n        <p>%s</p>\n      </description>\n'
          '    </release>\n') % (version, time.strftime("%Y-%m-%d"), escape(msg))
-for mi in ("packaging/io.github.zoutmax.FifineControlDeck.metainfo.xml",
-           "flatpak/io.github.zoutmax.FifineControlDeck.metainfo.xml"):
+for mi in ("packaging/io.github.zoutmax.FifineControlDeck.metainfo.xml",):
     with open(mi) as f:
         body = f.read()
     if 'version="%s"' % version in body:
@@ -57,11 +56,11 @@ for mi in ("packaging/io.github.zoutmax.FifineControlDeck.metainfo.xml",
         f.write(body.replace("  <releases>\n", "  <releases>\n" + entry, 1))
     print("metainfo: added %s to %s" % (version, mi))
 PYEOF
-command -v appstreamcli >/dev/null && appstreamcli validate packaging/*.metainfo.xml flatpak/*.metainfo.xml
+command -v appstreamcli >/dev/null && appstreamcli validate packaging/*.metainfo.xml
 
 echo ">> committing + tagging v$VERSION"
 git add snap/snapcraft.yaml debian/changelog CHANGELOG.md \
-        packaging/*.metainfo.xml flatpak/*.metainfo.xml
+        packaging/*.metainfo.xml
 git "${GIT_ID[@]}" commit -m "release: v$VERSION
 
 $MSG"
