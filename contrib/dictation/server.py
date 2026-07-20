@@ -45,7 +45,7 @@ def main():
                 segments, _info = model.transcribe(
                     path, vad_filter=True,
                     # bias the vocabulary toward the project's proper nouns
-                    initial_prompt="Reddit, GitHub, Flathub, snap, PPA, "
+                    initial_prompt="Reddit, GitHub, snap, PPA, "
                                    "fifine, AmpliGame, Linux, Claude, deck")
                 text = " ".join(s.text.strip() for s in segments).strip()
             conn.sendall((text + "\n").encode())
