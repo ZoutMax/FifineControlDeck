@@ -57,8 +57,20 @@ as soon as classic is granted. Thanks!
       as plug attributes: "no concrete plan as of now, but PRs are always
       welcome". Also tentatively agreed that keeping the broken stable
       channel closed is the right convention (pinged @store to confirm).
-- [ ] **Parked.** Revisit when the project has a longer track record. Two
-      routes then: (a) re-ask for classic with the maturity dossier, or
-      (b) the stronger play: contribute the vendor/product-scoped hidraw
-      interface to snapd, which would allow a STRICT snap and build exactly
-      the track record reviewers want. Nothing is published meanwhile.
+- [x] **2026-07-20: ogra opened a snapd proposal that would solve this at
+      the platform level** ("Hidraw and i2c slots for classic gadgets",
+      https://forum.snapcraft.io/t/hidraw-and-i2c-slots-for-classic-gadgets/52392):
+      add `hidraw` and `i2c` slots to the classic PC gadget by default,
+      because "we recently have more and more classic confinement requests
+      for snaps that simply need access to hidraw or i2c devices on
+      classically installed PCs and we usually have to turn them down".
+      His open question is whether snapd copes gracefully when a gadget
+      declares a slot for a device that does not exist.
+      If this lands, fifine-control-deck ships as a STRICT snap: no classic
+      request, no maturity objection, no custom interface to write.
+- [ ] **Parked, now watching that proposal.** Order of preference:
+      (a) ogra's gadget-slot change lands, then just plug `hidraw` in
+      snapcraft.yaml and publish strict; (b) contribute the
+      vendor/product-scoped interface jslarraz suggested (u2f_devices
+      style); (c) re-ask for classic with a maturity dossier. Nothing is
+      published to the store meanwhile.
