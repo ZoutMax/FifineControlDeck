@@ -82,6 +82,10 @@ Revisit once the project has a longer track record (~October 2026). Until
 then the PPA and the `.deb` are the supported install paths; the Snap is
 parked for the same maturity reason (see [`SNAP.md`](SNAP.md)).
 
+> **Disk note for whoever builds this:** a `flatpak-builder` run leaves a
+> multi-GB `.flatpak-builder/` cache next to the manifest, on top of ~6 GB of
+> KDE runtime/SDK. Delete the cache directory when finished.
+
 **Verified by a real sandbox build (2026-07-20).** `flatpak-builder` build
 of the 0.9.0 manifest, installed and exercised:
 
