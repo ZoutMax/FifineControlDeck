@@ -160,9 +160,22 @@ def _retrieve_master_secret(timeout_ms: int = 30_000) -> Optional[bytes]:
 def _master() -> Optional[bytes]:
     """The master secret, retrieved once per process. A failed retrieval is
     also cached: the portal will not start answering mid-session, and
-    retrying on every keystroke would hammer D-Bus."""
+    retrying on every keystroke would hammer D-Bus.
+
+    THREADING: the retrieval builds Qt/D-Bus objects and runs a nested event
+    loop, which is only safe on the main thread. A password key press
+    dispatches on the controller's action worker thread, so retrieving there
+    would at best misbehave and at worst block that serial queue for the full
+    portal timeout, freezing every later action. prime() is therefore called
+    once at startup from the main thread; off the main thread this only ever
+    returns an already-cached value."""
     global _MASTER, _MASTER_TRIED
     if not _MASTER_TRIED:
+        import threading
+        if threading.current_thread() is not threading.main_thread():
+            log.warning("secret portal: not primed before use off the main "
+                        "thread; skipping retrieval (see prime())")
+            return None
         _MASTER_TRIED = True
         try:
             _MASTER = _retrieve_master_secret()
@@ -170,6 +183,14 @@ def _master() -> Optional[bytes]:
             log.warning("secret portal: %s", e)
             _MASTER = None
     return _MASTER
+
+
+def prime() -> bool:
+    """Fetch the master secret up front, on the main thread. Call once at
+    startup inside Flatpak so later reads (which happen on the action worker
+    thread) are pure decryption with no Qt or D-Bus involved. Returns True
+    when the store is usable afterwards."""
+    return _master() is not None
 
 
 def _fernet():

@@ -264,6 +264,24 @@ def _portal_autostart(enable: bool) -> bool:
                        responder.handle)
 
 
+def _prime_secret_portal() -> None:
+    """Inside Flatpak, fetch the Secret portal's master secret NOW, on the
+    main thread. Password keys are dispatched on the controller's action
+    worker thread, and the portal retrieval runs a nested Qt/D-Bus event
+    loop: doing that from the worker would block the serial action queue for
+    the whole portal timeout (every later key press stuck behind it). After
+    priming, reads are pure decryption. Outside Flatpak this is a no-op."""
+    from .actions import IN_FLATPAK
+    if not IN_FLATPAK:
+        return
+    try:
+        from . import portal_secret
+        if portal_secret.prime():
+            log.info("secret portal ready")
+    except Exception as e:                       # never block startup
+        log.warning("secret portal priming failed: %s", e)
+
+
 def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtGui import QIcon, QGuiApplication
@@ -342,6 +360,7 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
             return 1
 
     ensure_dirs()
+    _prime_secret_portal()
     config = DeckConfig.load()
     controller = DeckController(config)
 
@@ -426,6 +445,7 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
 def run_headless() -> int:
     import time
     ensure_dirs()
+    _prime_secret_portal()
     config = DeckConfig.load()
     controller = DeckController(config)
     ok = controller.start()

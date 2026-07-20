@@ -72,3 +72,56 @@ def test_corrupt_store_file_degrades_gracefully(portal):
     assert portal.get("pw-abc") is None            # no crash
     assert portal.store("pw-new", "v") is True     # store recovers the file
     assert portal.get("pw-new") == "v"
+
+
+# ---------------------------------------------------------------------------
+# Threading: the portal retrieval must never run on the action worker thread
+# ---------------------------------------------------------------------------
+def test_master_is_never_retrieved_off_the_main_thread(monkeypatch):
+    """Password keys dispatch on the controller's action worker thread. The
+    portal retrieval builds Qt/D-Bus objects and runs a nested event loop, so
+    doing it there would block the SERIAL action queue for the whole portal
+    timeout: every later key press stuck behind one password key. Off the
+    main thread an unprimed store must decline, not retrieve."""
+    import threading
+
+    monkeypatch.setattr(portal_secret, "_MASTER", None)
+    monkeypatch.setattr(portal_secret, "_MASTER_TRIED", False)
+    monkeypatch.setattr(portal_secret, "_retrieve_master_secret",
+                        lambda *a, **k: pytest.fail(
+                            "portal retrieval attempted off the main thread"))
+    result = {}
+
+    def worker():
+        result["master"] = portal_secret._master()
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join(5)
+    assert result["master"] is None
+    assert portal_secret._MASTER_TRIED is False   # still primeable later
+
+
+def test_primed_master_is_usable_from_a_worker_thread(monkeypatch):
+    """After prime() on the main thread, worker-thread reads are pure
+    decryption: no Qt, no D-Bus, no blocking."""
+    import threading
+
+    monkeypatch.setattr(portal_secret, "_MASTER", None)
+    monkeypatch.setattr(portal_secret, "_MASTER_TRIED", False)
+    monkeypatch.setattr(portal_secret, "_retrieve_master_secret",
+                        lambda *a, **k: MASTER)
+    assert portal_secret.prime() is True
+    monkeypatch.setattr(portal_secret, "_retrieve_master_secret",
+                        lambda *a, **k: pytest.fail("must use the primed value"))
+    assert portal_secret.store("pw-t", "threaded") is True
+    got = {}
+
+    def worker():
+        got["v"] = portal_secret.get("pw-t")
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join(5)
+    assert got["v"] == "threaded"
+    portal_secret.delete("pw-t")

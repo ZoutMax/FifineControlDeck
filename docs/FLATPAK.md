@@ -82,6 +82,19 @@ Revisit once the project has a longer track record (~October 2026). Until
 then the PPA and the `.deb` are the supported install paths; the Snap is
 parked for the same maturity reason (see [`SNAP.md`](SNAP.md)).
 
+**Verified by a real sandbox build (2026-07-20).** `flatpak-builder` build
+of the 0.9.0 manifest, installed and exercised:
+
+- effective permissions carry **no** `org.freedesktop.Flatpak` and **no**
+  `org.freedesktop.secrets` (only the KDE runtime's own defaults);
+- the Secret portal returns a master secret inside the sandbox with zero
+  permissions requested, and the encrypted store round-trips (0600 file, no
+  plaintext on disk) through both `portal_secret` and the `secret_store`
+  chain;
+- the bundled `cryptography` wheel imports (49.0.0, Python 3.13);
+- the GUI constructs with all 15 keys, and without host access the app
+  reports its degraded state instead of failing.
+
 **Both technical reviewer points were addressed in 0.9.0:**
 
 - `--talk-name=org.freedesktop.secrets` is gone: the "Type password" action
