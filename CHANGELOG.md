@@ -4,7 +4,7 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
-## [0.9.0] - Unreleased
+## [0.9.0] - 2026-07-20
 Store-readiness release (#6): both technical objections from the Flathub
 review are resolved, in ways that also make the product better outside any
 store.

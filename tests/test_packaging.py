@@ -249,3 +249,15 @@ def test_flatpak_bundles_cryptography_for_the_secret_portal():
     assert mod is not None, "python3-cryptography module missing from deps"
     arch_sets = [tuple(s["only-arches"]) for s in mod["sources"] if "only-arches" in s]
     assert ("x86_64",) in arch_sets and ("aarch64",) in arch_sets
+
+
+def test_deb_dependencies_are_desktop_agnostic():
+    """The app must run on any Debian-family desktop (KDE, XFCE, LXQt, MATE,
+    sway...), not just GNOME: Qt UI, XDG autostart, SecretService/portal for
+    secrets, MPRIS for media, wpctl/pactl for audio. No desktop environment's
+    packages may creep into the dependency chain."""
+    with open(os.path.join(ROOT, "debian", "control")) as f:
+        control = f.read().lower()
+    section = control[control.index("depends:"):]
+    for forbidden in ("gnome", "gtk", "kde", "kwallet", "plasma", "xfce"):
+        assert forbidden not in section, f"desktop-specific dep: {forbidden}"

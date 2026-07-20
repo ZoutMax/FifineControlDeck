@@ -119,11 +119,29 @@ def _retrieve_master_secret(timeout_ms: int = 30_000) -> Optional[bytes]:
             log.warning("secret portal: request was denied")
             return None
 
-        chunks = []
-        while True:
-            chunk = os.read(read_fd, 4096)
-            if not chunk:
-                break
+        # Bounded, non-blocking read. The spec says the portal writes the
+        # master secret to the fd, but implementations differ on whether
+        # they close their duplicate afterwards — a blocking read-to-EOF
+        # hangs forever against one that does not (observed live with the
+        # GNOME backend on the dev machine). So: poll with select, take
+        # what arrives, and treat a quiet gap after data as completion.
+        import select
+        import time as _time
+        os.set_blocking(read_fd, False)
+        chunks: list = []
+        deadline = _time.monotonic() + 10.0
+        while _time.monotonic() < deadline:
+            ready, _, _ = select.select([read_fd], [], [], 0.25)
+            if not ready:
+                if chunks:
+                    break              # data arrived, then silence: done
+                continue
+            try:
+                chunk = os.read(read_fd, 4096)
+            except BlockingIOError:
+                continue
+            if chunk == b"":
+                break                  # EOF: the portal closed its copy
             chunks.append(chunk)
         master = b"".join(chunks)
         if not master:
