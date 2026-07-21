@@ -452,3 +452,52 @@ def test_hotplug_add_cannot_double_open_during_try_open(monkeypatch):
     finally:
         release.set()
         c.stop()
+
+
+def test_failed_setup_closes_the_device_it_opened():
+    """0.10.0 audit: _setup_device returned False on any post-open() failure
+    without closing — open() has already started the SDK's reader and heartbeat
+    threads, so the fd and both threads leaked for the process lifetime. The
+    object was not even collectable (the threads hold bound methods of it), and
+    self.device is only assigned after init(), so try_open's own close was
+    skipped too and every later replug piled on another leak."""
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+
+    class _Flaky(MockDevice):
+        closed = 0
+
+        def open(self):
+            return True
+
+        def init(self):
+            raise RuntimeError("device wedged mid-init")
+
+        def close(self, *a, **k):
+            _Flaky.closed += 1
+
+    c = DeckController(DeckConfig())
+    dev = _Flaky()
+    assert c._setup_device(dev) is False
+    assert _Flaky.closed == 1, "the opened device was leaked, not closed"
+    assert c.device is None
+
+
+def test_a_device_that_never_opened_is_not_closed():
+    """open() returning False means there is nothing to close; calling close()
+    on it would push a disconnect packet at a device we never had."""
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+
+    class _Shut(MockDevice):
+        closed = 0
+
+        def open(self):
+            return False
+
+        def close(self, *a, **k):
+            _Shut.closed += 1
+
+    c = DeckController(DeckConfig())
+    assert c._setup_device(_Shut()) is False
+    assert _Shut.closed == 0

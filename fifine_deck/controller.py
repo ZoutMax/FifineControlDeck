@@ -89,6 +89,10 @@ class DeckController:
         self.on_key_event: Optional[Callable[[int, bool], None]] = None
         self.on_page_changed: Optional[Callable[[], None]] = None
         self.on_monitor_image: Optional[Callable[[int, object, str], None]] = None
+        # Fired when brightness is changed from the DECK (a brightness key), so
+        # the GUI slider can follow. Without it the slider kept its stale value
+        # and the next one-step nudge slammed the device back to it.
+        self.on_brightness_changed: Optional[Callable[[int], None]] = None
 
         register()
 
@@ -211,6 +215,22 @@ class DeckController:
             return True
         except Exception as e:
             log.error("device setup failed: %s", e)
+            # open() succeeded if we got past it, and it starts the SDK's reader
+            # and heartbeat threads — so bailing out without close() strands an
+            # open hidraw fd plus two live threads for the process lifetime. The
+            # object is not even collectable: both threads hold bound methods of
+            # it, so __del__ never runs. Worse, self.device is only assigned
+            # after init(), so a failure before that leaves the leak unreachable
+            # AND makes try_open skip its own close (it keys off self.device),
+            # letting every later replug pile on another one.
+            with self._lock:
+                orphan = dev is not self.device
+            if orphan:
+                try:
+                    dev.close()
+                except Exception:                     # already half-dead; best effort
+                    log.debug("cleanup close() after failed setup also failed",
+                              exc_info=True)
             return False
 
     def stop(self):
@@ -704,6 +724,12 @@ class DeckController:
     def set_brightness(self, percent: int) -> None:
         self.config.brightness = max(0, min(100, int(percent)))
         self.apply_brightness()
+        # Tell the GUI, which owns the slider and the save timer. The deck path
+        # previously did neither: the slider drifted out of sync, and the value
+        # was never queued for save, so a deck-set brightness was lost on
+        # restart unless some unrelated edit happened to trigger a write.
+        if self.on_brightness_changed:
+            self.on_brightness_changed(self.config.brightness)
 
     def adjust_brightness(self, delta: int) -> None:
         self.set_brightness(self.config.brightness + delta)

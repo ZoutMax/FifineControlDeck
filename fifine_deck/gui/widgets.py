@@ -266,7 +266,20 @@ class KeyButton(QToolButton):
                 self.keyMoved.emit(src, self.index)
             e.acceptProposedAction()
         elif md.hasFormat(MIME_ACTION):
-            atype = bytes(md.data(MIME_ACTION)).decode()
+            payload = bytes(md.data(MIME_ACTION)).decode()
+            atype, _, page_id = payload.partition(":")
+            provider = globals().get("CURRENT_PAGE_ID_PROVIDER")
+            cur_page = provider() if provider else ""
+            if page_id and cur_page and page_id != cur_page:
+                # Same hazard the key-move branch above guards, and the same
+                # cause: QDrag.exec runs a nested event loop, so a page change
+                # pushed by the deck is delivered mid-drag. Unguarded, the drop
+                # resolved the key on whatever page is current at DROP time, so
+                # aiming at key 3 of page 1 rewrote key 3 of page 2 — keeping
+                # that key's old label over the new action, and autosaved 600 ms
+                # later with no undo.
+                e.ignore()
+                return
             self.actionDropped.emit(self.index, atype)
             e.acceptProposedAction()
 
@@ -775,10 +788,24 @@ class ActionEditor(QWidget):
                 tuple(sorted((k, str(v)) for k, v in action.params.items())))
 
     def clear(self):
+        # Blank every field too: a disabled editor still showing the previous
+        # key's label/icon/colours/action reads as "this is what's selected",
+        # which contradicts the "No key selected" header.
+        self._building = True
         self._kc = None
         self._index = None
+        default = KeyConfig()
+        self.label_edit.setText(default.label)
+        self.icon_edit.setText(default.icon)
+        self.bg_btn.set_color(default.bg_color)
+        self.fg_btn.set_color(default.text_color)
+        self.params.set_action(Action())
+        self.hold_params.set_action(Action())
+        self._last_action = Action()
+        self._last_action_sig = self._action_sig(self._last_action)
         self.setEnabled(False)
         self.title.setText("No key selected")
+        self._building = False
 
     def _clear_key(self):
         """Reset the selected key to empty (label, icon, colours, action)."""
@@ -799,17 +826,35 @@ class ActionEditor(QWidget):
         self.set_key(self._kc, self._index)   # refresh the editor fields
         self.changed.emit()
 
+    def _apply_picked_icon(self, path: str):
+        """Apply an icon chosen in a modal picker.
+
+        Both pickers run a nested event loop, so a page or profile change
+        pushed by the deck can land while one is open and deselect the key
+        underneath it (_kc becomes None). Writing the path into the field then
+        applied it to nothing — _on_edit bails on `_kc is None` — so the pick
+        was silently discarded, and it left the picked path sitting in an
+        otherwise blank, disabled "No key selected" panel. Say so instead.
+        """
+        if self._kc is None:
+            QMessageBox.information(
+                self, "Key no longer selected",
+                "The page changed while the picker was open, so the icon was "
+                "not applied.\n\nSelect the key again and re-pick it.")
+            return
+        self.icon_edit.setText(path)
+
     def _browse_icon(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Choose icon", "", "Images (*.png *.jpg *.jpeg *.svg *.gif *.bmp)")
         if path:
-            self.icon_edit.setText(path)
+            self._apply_picked_icon(path)
 
     def _pick_library(self):
         dlg = IconLibraryDialog(self)
         try:
             if dlg.exec() and dlg.chosen:
-                self.icon_edit.setText(dlg.chosen)
+                self._apply_picked_icon(dlg.chosen)
         finally:
             # Parented to the long-lived editor, so without this the dialog
             # (and its icon grid) leaks on every pick.
@@ -881,11 +926,23 @@ class ActionCatalog(QListWidget):
         if not atype:
             return
         mime = QMimeData()
-        mime.setData(MIME_ACTION, atype.encode())
+        # Stamp the page the drag STARTED on, exactly as KeyButton does for a
+        # key move, so KeyButton.dropEvent can reject a drop that lands after
+        # the deck switched pages underneath the drag. Action types are plain
+        # identifiers with no colon, so partition() splits this unambiguously.
+        provider = globals().get("CURRENT_PAGE_ID_PROVIDER")
+        page_id = provider() if provider else ""
+        mime.setData(MIME_ACTION, f"{atype}:{page_id}".encode())
         mime.setText(atype)
         drag = QDrag(self)
         drag.setMimeData(mime)
         drag.exec(Qt.DropAction.CopyAction)
+        # The catalog is a drag source, not a selection the rest of the UI
+        # tracks. A row left highlighted after the drop reads as "this is the
+        # selected key's action", which it is not — and it survives even a
+        # deselect, contradicting the editor's "No key selected".
+        self.setCurrentItem(None)
+        self.clearSelection()
 
 
 # ---------------------------------------------------------------------------

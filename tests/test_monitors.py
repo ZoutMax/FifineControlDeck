@@ -1186,3 +1186,40 @@ def test_gputemp_prefers_working_nvml_over_present_amdgpu(monkeypatch):
     monkeypatch.setattr(monitors, "_probe_gputemp", lambda: backend)
     r = Sampler().sample(MonitorSpec.from_params({"metric": "gputemp"}))
     assert r.text == "63°C"                           # NVML value, not 41
+
+
+def test_a_persistently_failing_metric_logs_once_not_every_sample(caplog):
+    """0.10.0 audit: sample() logged a WARNING on every failure, and the caller
+    re-samples every spec.interval regardless (the unchanged-signature fast
+    path suppresses only the repaint). interval floors at 0.5 s, so one key
+    pointed at a mistyped mount wrote ~172,800 identical lines a day into the
+    journal, forever, while the key face just read "n/a"."""
+    import logging
+    from fifine_deck import monitors
+
+    s = monitors.Sampler()
+    spec = monitors.MonitorSpec.from_params({"metric": "disk",
+                                             "target": "/no/such/mount"})
+    with caplog.at_level(logging.WARNING, logger="fifine_deck.monitors"):
+        readings = [s.sample(spec) for _ in range(8)]
+
+    assert all(not r.ok for r in readings)          # still reports failure
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, f"logged {len(warnings)} times, expected 1"
+
+
+def test_a_different_failing_target_still_gets_its_own_line(caplog):
+    """Deduplication is per (stream, error), not a global mute."""
+    import logging
+    from fifine_deck import monitors
+
+    s = monitors.Sampler()
+    with caplog.at_level(logging.WARNING, logger="fifine_deck.monitors"):
+        for target in ("/no/such/mount", "/also/missing"):
+            spec = monitors.MonitorSpec.from_params({"metric": "disk",
+                                                     "target": target})
+            s.sample(spec)
+            s.sample(spec)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 2, f"expected one line per target, got {len(warnings)}"

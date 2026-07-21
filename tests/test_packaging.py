@@ -159,6 +159,36 @@ def test_install_sh_finds_the_deb_the_build_actually_produces(tmp_path):
     assert out.stdout.strip() == f"dist/{produced}", out.stderr
 
 
+def test_install_sh_rebuilds_over_a_stale_deb(tmp_path):
+    """0.10.0 audit: the build branch was gated on "no .deb at all", so
+    `git pull && ./install.sh` in a clone that had ever been built reinstalled
+    whatever was already in dist/. apt reported success and the user kept the
+    old version. Runs install.sh's real decision logic against a tree whose
+    dist/ holds only a previous version.
+    """
+    import subprocess
+
+    src = _read("install.sh")
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "fifine-control-deck_0.1.0_amd64.deb").write_bytes(b"")
+    (tmp_path / "debian").mkdir()
+    (tmp_path / "debian" / "changelog").write_text(
+        "fifine-control-deck (9.9.9) noble; urgency=medium\n")
+    (tmp_path / "packaging").mkdir()
+    stub = tmp_path / "packaging" / "build-deb.sh"
+    stub.write_text('#!/bin/sh\necho "BUILT $1 $2"\n'
+                    ': > "dist/fifine-control-deck_$1_$2.deb"\n')
+    stub.chmod(0o755)
+
+    body = src[src.index("find_deb()"):src.index('if [ -z "$DEB" ]; then\n    cat')]
+    out = subprocess.run(["bash", "-c", f"set -e\nARCH=amd64\n{body}\necho \"DEB=$DEB\""],
+                         cwd=tmp_path, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert "BUILT 9.9.9 amd64" in out.stdout, (
+        f"stale dist/ short-circuited the rebuild: {out.stdout!r}")
+    assert "DEB=dist/fifine-control-deck_9.9.9_amd64.deb" in out.stdout, out.stdout
+
+
 def test_install_sh_does_not_build_a_downgrade():
     """build-deb.sh defaults to a placeholder version, which apt would treat as
     a downgrade of a real install — install.sh must pass the real one."""
@@ -208,8 +238,21 @@ def test_release_sh_gates_on_and_stages_the_changelog():
     CI — after being pushed. release.sh must check first and commit the file."""
     src = _read("release.sh")
     assert "CHANGELOG.md has no" in src, "missing pre-flight CHANGELOG check"
-    assert "snap/snapcraft.yaml debian/changelog CHANGELOG.md" in src, (
+    assert re.search(r"^git add -A\s*$", src, re.M), (
         "CHANGELOG.md is not staged with the release commit")
+
+
+def test_release_sh_stages_source_changes_not_just_version_files():
+    """0.10.0 audit (critical): release.sh staged a fixed list of version files.
+    `git add` on an already-clean path is a silent no-op, so an uncommitted
+    source fix stayed uncommitted — the tag landed on a commit carrying the new
+    CHANGELOG claims and none of the code behind them, and release CI then built
+    the published .deb from exactly that tag. The release must be the tree that
+    was tested, so nothing may narrow the staging back to a path list."""
+    src = _read("release.sh")
+    stage = [ln.strip() for ln in src.splitlines() if ln.strip().startswith("git add")]
+    assert stage == ["git add -A"], (
+        f"expected a single whole-tree stage, found {stage}")
 
 
 def test_release_sh_refuses_a_tag_pointing_elsewhere():
@@ -229,3 +272,43 @@ def test_deb_dependencies_are_desktop_agnostic():
     section = control[control.index("depends:"):]
     for forbidden in ("gnome", "gtk", "kde", "kwallet", "plasma", "xfce"):
         assert forbidden not in section, f"desktop-specific dep: {forbidden}"
+
+
+def test_udev_rule_ships_to_a_non_aliased_location():
+    """0.10.0 audit: both build paths installed the rule into /lib/udev/rules.d.
+    On a merged-/usr system (noble and later) /lib is a symlink into /usr/lib,
+    so that is an aliased location — DEP-17 forbids shipping there and lintian
+    errors on every PPA upload (aliased-location). Both installers must agree,
+    or the .deb and the PPA build would put the rule in different places.
+    """
+    for path in ("packaging/build-deb.sh", "debian/rules"):
+        # Explaining the old path in a comment is fine; installing into it is
+        # not — same distinction as test_nothing_still_references_the_old_rule_name.
+        lines = [ln for ln in _read(path).splitlines()
+                 if ln.strip() and not ln.lstrip().startswith("#")]
+        assert any("usr/lib/udev/rules.d" in ln for ln in lines), \
+            f"{path}: rule is not installed into /usr/lib/udev/rules.d"
+        stale = [ln for ln in lines if re.search(r"(?<!usr)/lib/udev/rules\.d", ln)]
+        assert not stale, (
+            f"{path}: still ships into the aliased /lib/udev/rules.d: {stale}")
+
+
+def test_release_workflow_validates_the_metadata_it_publishes():
+    """0.10.0 audit: appstreamcli/desktop-file-validate ran only in
+    python-package.yml, which fires on branch pushes. release.yml inherited the
+    gate purely because release.sh pushes main and the tag together — a tag-only
+    push or a re-tag published a .deb whose metainfo.xml nothing had checked."""
+    import yaml
+    wf = yaml.safe_load(_read(".github/workflows/release.yml"))
+    steps = wf["jobs"]["release"]["steps"]
+    runs = "\n".join(s.get("run", "") for s in steps)
+    assert "appstreamcli validate" in runs, "release publishes unvalidated AppStream metadata"
+    assert "desktop-file-validate" in runs, "release publishes an unvalidated .desktop"
+    # ...and the tools it needs must actually be installed in that job
+    assert "appstream" in runs and "desktop-file-utils" in runs, \
+        "validation step would fail: tools never installed"
+    build_at = next(i for i, s in enumerate(steps)
+                    if "build-deb.sh" in s.get("run", ""))
+    validate_at = next(i for i, s in enumerate(steps)
+                       if "appstreamcli validate" in s.get("run", ""))
+    assert validate_at < build_at, "validation must gate the build, not follow it"

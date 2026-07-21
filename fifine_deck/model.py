@@ -12,10 +12,14 @@ User icons at:    ~/.config/fifine-control-deck/icons/
 from __future__ import annotations
 
 import json
+import logging
 import os
+import shutil
 import uuid
 from dataclasses import dataclass, field
 from typing import Optional
+
+log = logging.getLogger(__name__)
 
 CONFIG_DIR = os.path.join(
     os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
@@ -375,7 +379,42 @@ class DeckConfig:
         with open(path) as f:
             raw = f.read()
         try:
-            return cls.from_dict(json.loads(raw))
+            data = json.loads(raw)
+            # from_dict is TOTAL: _as_dict/_as_str coerce anything parseable,
+            # so it cannot raise on a wrong-SHAPED config — only a JSON syntax
+            # error ever reached the recovery below, never the "wrong shape"
+            # case its own comment claims to cover. So a mistyped top-level key
+            # ("Profiles"), a top-level list, or some other app's JSON loaded as
+            # a fresh empty profile, left the real config in place unbacked, and
+            # the first autosave 600 ms later overwrote the user's only copy.
+            # Gate on the structural check so those take the preserve-and-restart
+            # path instead.
+            if not cls.looks_like_config(data):
+                raise ValueError("not a deck config")
+            # A config written by a NEWER build: from_dict keeps only the keys
+            # this build knows, and save() then writes the stripped result back
+            # under the newer version number — so every setting the new build
+            # added is destroyed, and the new build cannot even tell it was
+            # downgraded. Keep one copy per version before that can happen. The
+            # common way in is syncing config.json between two machines on
+            # different versions.
+            try:
+                found = int(data.get("version", CONFIG_VERSION))
+            except (TypeError, ValueError):
+                found = CONFIG_VERSION
+            if found > CONFIG_VERSION:
+                keep = f"{path}.v{found}"
+                if not os.path.exists(keep):
+                    try:
+                        shutil.copy2(path, keep)
+                        log.warning("config.json was written by a newer version "
+                                    "(v%s > v%s); settings this build does not "
+                                    "know will be dropped. Kept a copy at %s",
+                                    found, CONFIG_VERSION, keep)
+                    except OSError:
+                        log.warning("config.json is from a newer version (v%s); "
+                                    "could not back it up", found)
+            return cls.from_dict(data)
         except (json.JSONDecodeError, AttributeError, ValueError,
                 TypeError, KeyError):
             # Corrupt or structurally-invalid config (bad JSON *or* wrong shape):

@@ -23,10 +23,23 @@ find_deb() {
 
 DEB="$(find_deb)"
 
-if [ -z "$DEB" ] && [ -x packaging/build-deb.sh ]; then
-    # Take the version from debian/changelog: build-deb.sh defaults to 0.1.0,
-    # and apt would treat that as a downgrade of any real install.
-    VERSION="$(sed -n '1s/.*(\([^)]*\)).*/\1/p' debian/changelog | sed 's/ppa[0-9]*$//')"
+# Take the version from debian/changelog: build-deb.sh defaults to 0.1.0, and
+# apt would treat that as a downgrade of any real install. An unpacked release
+# tarball has no debian/changelog, so VERSION is empty there and whatever .deb
+# ships beside this script is used as-is.
+VERSION="$(sed -n '1s/.*(\([^)]*\)).*/\1/p' debian/changelog 2>/dev/null | sed 's/ppa[0-9]*$//')"
+
+# Rebuild when dist/ holds no .deb at all, AND when the newest one there is for
+# some OTHER version than this tree's. Building only in the "none at all" case
+# meant `git pull && ./install.sh` in a clone that had ever been built silently
+# reinstalled the stale .deb: apt reported success and the user kept the old
+# version, believing they had upgraded.
+if [ -x packaging/build-deb.sh ] && [ -n "$VERSION" ] && \
+   [ "${DEB##*/}" != "fifine-control-deck_${VERSION}_${ARCH}.deb" ]; then
+    echo "Building $VERSION for $ARCH…"
+    ./packaging/build-deb.sh "$VERSION" "$ARCH"
+    DEB="$(find_deb)"
+elif [ -z "$DEB" ] && [ -x packaging/build-deb.sh ]; then
     echo "No .deb here for $ARCH — building ${VERSION:-0.1.0}…"
     ./packaging/build-deb.sh "${VERSION:-0.1.0}" "$ARCH"
     DEB="$(find_deb)"

@@ -1075,3 +1075,247 @@ def test_unknown_action_type_does_not_pollute_other_keys(qapp):
     ed.set_action(Action("hotkey", {"keys": "ctrl+c"}))  # a different key
     assert ed.type_combo.count() == base         # injected entry withdrawn
     assert ed.type_combo.findData("from_the_future") == -1
+
+
+def test_clearing_the_editor_blanks_every_field(win):
+    """0.10.0: clear() only greyed the panel and swapped the header to "No key
+    selected" — the label, icon, colours and both action combos still showed
+    the last key's settings, so a deselected editor read as if that key were
+    still selected."""
+    w, cfg, c = win
+    from fifine_deck.model import Action, KeyConfig
+    kc = cfg.active_profile().pages[0].key(1)
+    kc.label = "Prev"
+    kc.icon = "lib:prev_page"
+    kc.bg_color = "#123456"
+    kc.action = Action("prev_page", {})
+    kc.hold_action = Action("next_page", {})
+    w._on_key_selected(1)
+    ed = w.editor
+    assert ed.label_edit.text() == "Prev"        # populated by the selection
+
+    ed.clear()
+
+    default = KeyConfig()
+    assert ed.title.text() == "No key selected"
+    assert not ed.isEnabled()
+    assert ed.label_edit.text() == default.label
+    assert ed.icon_edit.text() == default.icon
+    assert ed.bg_btn.color().lower() == default.bg_color.lower()
+    assert ed.fg_btn.color().lower() == default.text_color.lower()
+    assert ed.params.get_action(peek=True).type == "none"
+    assert ed.hold_params.get_action(peek=True).type == "none"
+
+
+def test_clearing_the_editor_does_not_write_to_the_last_key(win):
+    """The blanking in clear() must not look like an edit: _kc is dropped
+    first, and _building suppresses the textChanged/changed cascade."""
+    w, cfg, c = win
+    from fifine_deck.model import Action
+    kc = cfg.active_profile().pages[0].key(1)
+    kc.label = "Prev"
+    kc.action = Action("prev_page", {})
+    w._on_key_selected(1)
+
+    w.editor.clear()
+    QApplication.processEvents()
+
+    assert kc.label == "Prev"                    # untouched by the blanking
+    assert kc.action.type == "prev_page"
+
+
+def test_key_grid_rows_are_packed_at_the_layout_spacing(win):
+    """0.10.0: the deck panel was stretched to fill the whole central area and
+    QGridLayout handed the slack to the rows, so the key rows drifted apart
+    into large empty bands. The panel is aligned, not stretched, so rows sit
+    exactly one button + one spacing apart."""
+    from fifine_deck.device import DEVICE_PROFILE
+    w, cfg, c = win
+    w.resize(1600, 1200)                         # far taller than the panel needs
+    w.show()                                     # nothing is laid out until shown
+    QApplication.processEvents()
+
+    cols = DEVICE_PROFILE["cols"]
+    tops = sorted({w.buttons[i].geometry().top() for i in w.buttons})
+    assert len(tops) > 1, "expected a multi-row device profile"
+    btn_h = w.buttons[1].height()
+    expected = btn_h + w.grid.verticalSpacing()
+    assert all(b - a == expected for a, b in zip(tops, tops[1:]))
+    # and the panel itself is only as tall as its content
+    rows = -(-DEVICE_PROFILE["key_count"] // cols)
+    m = w.grid.contentsMargins()
+    assert w.grid_host.height() == (rows * btn_h
+                                    + (rows - 1) * w.grid.verticalSpacing()
+                                    + m.top() + m.bottom())
+
+
+def test_deselect_also_unchecks_the_key_button(win):
+    """0.10.0 audit: every deselect path cleared the editor but left the key
+    button drawn with its blue :checked border, so the grid claimed a key was
+    selected while the panel said "No key selected" — the same contradiction
+    0.10.0 fixes inside the panel, one widget over."""
+    from fifine_deck.model import Page
+    w, cfg, c = win
+    cont = cfg.active_profile()
+    cont.pages.append(Page(name="P2"))
+    w._reload_pages()
+
+    w._on_key_selected(3)
+    assert w.buttons[3].isChecked()
+
+    w._on_page_selected(1)                       # switch page out from under it
+
+    assert not w.buttons[3].isChecked(), "key button still drawn as selected"
+    assert w.selected_index is None
+    assert w.editor.title.text() == "No key selected"
+
+
+def test_every_deselect_path_leaves_no_half_state(win):
+    """The four callers must all go through _deselect: two of them used to
+    leave selected_index pointing at the old key."""
+    from fifine_deck.model import Page
+    w, cfg, c = win
+    cont = cfg.active_profile()
+    cont.pages.append(Page(name="P2"))
+    w._reload_pages()
+
+    for label, act in (("page switch", lambda: w._on_page_selected(1)),
+                       ("external page change", w._on_external_page_change),
+                       ("delete page", w._del_page)):
+        cont.pages[:] = cont.pages[:2] or [Page(name="P1"), Page(name="P2")]
+        while len(cont.pages) < 2:
+            cont.pages.append(Page(name="P2"))
+        w._reload_pages()
+        w._on_key_selected(2)
+        w._last_page_key = None                  # make the resync see a change
+        act()
+        assert w.selected_index is None, f"{label}: selected_index left stale"
+        assert not any(b.isChecked() for b in w.buttons.values()), \
+            f"{label}: a key button is still checked"
+
+
+def test_action_drop_after_a_mid_drag_page_change_is_rejected(win):
+    """0.10.0 audit: QDrag.exec runs a nested event loop, so a deck page change
+    lands mid-drag. The key-MOVE payload is stamped with its origin page and
+    rejected on mismatch; the catalog-ACTION payload was not, so a drop aimed
+    at page 1's key 3 rewrote page 2's key 3 — clobbering its action while
+    leaving its old label, then autosaving 600 ms later."""
+    from PyQt6.QtCore import QMimeData, QPointF, Qt
+    from PyQt6.QtGui import QDropEvent
+    from fifine_deck.model import Action, Page
+    from fifine_deck.gui import widgets as wdg
+    w, cfg, c = win
+    cont = cfg.active_profile()
+    cont.pages.append(Page(name="P2"))
+    w._reload_pages()
+
+    victim = cont.pages[1].key(3)
+    victim.label = "Undo"
+    victim.action = Action("hotkey", {"keys": "ctrl+z"})
+
+    # payload stamped on page 1, delivered while page 2 is current
+    page1_id = cont.pages[0].id
+    md = QMimeData()
+    md.setData(wdg.MIME_ACTION, f"run_command:{page1_id}".encode())
+    w._on_page_selected(1)
+    assert w._page().id == cont.pages[1].id
+
+    ev = QDropEvent(QPointF(5, 5), Qt.DropAction.CopyAction, md,
+                    Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    w.buttons[3].dropEvent(ev)
+
+    assert victim.action.type == "hotkey", "wrong page's key was overwritten"
+    assert victim.action.params.get("keys") == "ctrl+z"
+    assert victim.label == "Undo"
+
+
+def test_action_drop_on_the_page_it_started_on_still_applies(win):
+    """The guard must not break the normal case."""
+    from PyQt6.QtCore import QMimeData, QPointF, Qt
+    from PyQt6.QtGui import QDropEvent
+    from fifine_deck.gui import widgets as wdg
+    w, cfg, c = win
+    md = QMimeData()
+    md.setData(wdg.MIME_ACTION, f"run_command:{w._page().id}".encode())
+    ev = QDropEvent(QPointF(5, 5), Qt.DropAction.CopyAction, md,
+                    Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    w.buttons[4].dropEvent(ev)
+    assert w._page().key(4).action.type == "run_command"
+
+
+def test_reorder_dialogs_do_not_leak(win, monkeypatch):
+    """0.10.0 audit: ReorderDialog is parented to the long-lived MainWindow and
+    was never deleteLater()d, on either the OK or the Cancel path — the leak
+    already fixed for IconLibraryDialog and QColorDialog."""
+    from PyQt6.QtWidgets import QDialog
+    from fifine_deck.model import Page, Profile
+    from fifine_deck.gui import main_window as mwmod
+    w, cfg, c = win
+    cfg.active_profile().pages.append(Page(name="P2"))
+    cfg.profiles.append(Profile(name="Second"))
+    w._reload_pages()
+
+    monkeypatch.setattr(mwmod.ReorderDialog, "exec", lambda self: 0)   # Cancel
+    for _ in range(5):
+        w._reorder_pages()
+        w._reorder_profiles()
+    QApplication.sendPostedEvents(None, 52)      # QEvent.Type.DeferredDelete
+    QApplication.processEvents()
+    assert w.findChildren(QDialog) == []
+
+
+def test_icon_picked_after_a_deselect_is_reported_not_silently_dropped(win, monkeypatch):
+    """0.10.0 audit: the pickers run nested event loops, so a deck page change
+    can deselect the key while one is open. The path was then written into the
+    field and applied to nothing — silently discarded, and left sitting in an
+    otherwise blank "No key selected" panel."""
+    from fifine_deck.gui import widgets as wdg
+    w, cfg, c = win
+    # The editor lives in widgets, so it is THAT module's QMessageBox that must
+    # be stubbed; the fixture only patches main_window's, and the real static
+    # helper would open a modal and block the run forever.
+    monkeypatch.setattr(wdg, "QMessageBox", _AutoBox)
+    w._on_key_selected(1)
+    w.editor.clear()                             # what the page change does
+
+    _AutoBox.infos = []
+    w.editor._apply_picked_icon("/tmp/some-icon.png")
+
+    assert w.editor.icon_edit.text() == "", "phantom icon left in a blank panel"
+    assert _AutoBox.infos, "the discarded pick was not reported to the user"
+
+
+def test_icon_picked_with_a_key_still_selected_applies(win, monkeypatch):
+    """The guard must not break the normal pick."""
+    from fifine_deck.gui import widgets as wdg
+    w, cfg, c = win
+    monkeypatch.setattr(wdg, "QMessageBox", _AutoBox)
+    w._on_key_selected(1)
+    w.editor._apply_picked_icon("/tmp/some-icon.png")
+    assert w.editor.icon_edit.text() == "/tmp/some-icon.png"
+    assert cfg.active_profile().pages[0].key(1).icon == "/tmp/some-icon.png"
+
+
+def test_deck_side_brightness_resyncs_the_slider_without_a_feedback_loop(win):
+    """0.10.0 audit: controller.set_brightness had no callback, so a deck
+    brightness key left the slider stale — and the next one-step nudge of that
+    slider slammed the device back to the stale value. The deck path also never
+    queued a save, so the value was lost on restart."""
+    w, cfg, c = win
+    w.bright.setValue(100)
+    w._save_timer.stop()
+
+    c.set_brightness(60)                         # what a deck brightness key does
+    QApplication.processEvents()
+
+    assert w.bright.value() == 60, "slider did not follow the deck"
+    assert cfg.brightness == 60
+    assert w._save_timer.isActive(), "deck-set brightness was never queued for save"
+
+    # and the resync must not have re-entered _on_brightness and pushed back
+    seen = []
+    w.bright.valueChanged.connect(lambda v: seen.append(v))
+    c.set_brightness(55)
+    QApplication.processEvents()
+    assert seen == [], f"resync re-emitted valueChanged: {seen}"
+    assert cfg.brightness == 55

@@ -4,7 +4,7 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
-## [0.10.0] - Unreleased
+## [0.10.0] - 2026-07-21
 
 ### Fixed
 - **The app no longer burns a CPU core doing nothing.** The vendored SDK's
@@ -16,6 +16,80 @@ follows [Semantic Versioning](https://semver.org/).
   instantly, so hotplug is unaffected. Measured after the fix on the same
   machine: **0.73% of a core, roughly 9x less**. Laptop users get the
   battery life back.
+- **The key grid no longer drifts apart on a tall window.** The deck panel
+  was stretched to fill the whole central area and the grid handed the slack
+  to its rows, so on a maximised window the rows of keys sat in separate
+  bands with large empty gaps between them. The panel now keeps its natural
+  size and is centred instead.
+- **Deselecting a key now clears the Key settings panel.** The header
+  switched to "No key selected" but the label, icon, colours and both action
+  dropdowns kept showing the last key's settings, so the panel read as though
+  that key were still selected. Every field is reset now.
+- **The action catalog no longer stays highlighted after a drag.** The
+  dragged row kept its selection highlight after the drop, which read as the
+  selected key's action even when no key was selected.
+- **A hand-edited config can no longer be silently thrown away.** Config
+  loading only ever caught JSON *syntax* errors: a file that parsed but had
+  the wrong shape (a mistyped top-level key, a top-level list, some other
+  app's JSON) loaded as one empty "Default" profile, left no `.corrupt`
+  backup, and was then overwritten by the first autosave 600 ms later — the
+  user's whole layout gone with nothing to restore from. Such files now take
+  the same preserve-and-restart path as unparseable ones.
+- **A config from a newer version is backed up before being downgraded.**
+  Opening it with an older build strips every setting that build does not
+  know and writes the result back under the *newer* version number, so the
+  newer build cannot tell it was downgraded. A copy is now kept as
+  `config.json.v<N>` first. The usual way in is syncing the config between
+  two machines on different versions.
+- **The headless service and the GUI can no longer both drive the deck.**
+  Headless mode took no single-instance lock, so running the shipped systemd
+  user service alongside the GUI opened the device twice. Linux delivers key
+  reports to every open reader, so one physical press fired its action twice
+  (a shell command ran twice, a page-switch skipped two pages) and the two
+  instances repainted the LCDs over each other.
+- **Key buttons no longer stay highlighted after a page or profile switch.**
+  The grid kept drawing a key as selected while the settings panel said "No
+  key selected" — the same contradiction as above, one widget over.
+- **Dropping an action can no longer land on the wrong page.** Dragging runs
+  a nested event loop, so a page switch coming from the deck arrives
+  mid-drag. Key *moves* were already guarded against this; catalog drops were
+  not, so aiming at a key on one page could overwrite that key on another —
+  replacing its action while keeping its old label, then autosaving.
+- **An icon picked while the page changes underneath is no longer silently
+  discarded.** It was applied to nothing and left sitting in an otherwise
+  blank panel. The app now says so.
+- **The brightness slider follows the deck.** Changing brightness from a deck
+  key left the slider stale, so the next nudge of it slammed the device back
+  to the old value. Brightness set from the deck is also saved now, instead
+  of being lost on restart.
+- **A failing monitor key no longer floods the log.** A key pointed at a
+  missing mount or an absent sensor logged a warning on every sample, which
+  at the 0.5 s floor is about 172,800 identical lines a day, indefinitely.
+  Each distinct failure is logged once.
+- **A failed device setup no longer leaks.** Any failure after the device was
+  opened returned without closing it, stranding an open handle and two live
+  threads for the lifetime of the app, once per attempt.
+
+### Packaging
+- `release.sh` now stages the whole tree. It staged a fixed list of version
+  files, and `git add` on an already-clean path is a silent no-op — so a fix
+  sitting uncommitted stayed uncommitted while the tag captured the changelog
+  entry claiming it, and the release CI built the published .deb from exactly
+  that tag.
+- `install.sh` rebuilds when `dist/` holds a .deb for a different version.
+  It only built when `dist/` was empty, so `git pull && ./install.sh` in a
+  clone that had ever been built silently reinstalled the old package and
+  reported success.
+- The udev rule ships to `/usr/lib/udev/rules.d` instead of
+  `/lib/udev/rules.d`. On a merged-`/usr` system `/lib` is a symlink into
+  `/usr/lib`, so the old path was an aliased location: DEP-17 forbids it and
+  lintian raised `aliased-location` on every PPA upload. Every systemd-era
+  udev reads the new path. Upgrading across the move was tested on a real
+  merged-`/usr` install: the rule survives and device access is unaffected.
+- The release workflow validates the AppStream and desktop metadata it
+  publishes. Those checks lived only in the branch-push workflow, so a
+  tag-only push or a re-tag could publish a .deb whose `metainfo.xml` nothing
+  had validated.
 
 ## [0.9.0] - 2026-07-20
 Packaging and store-submission work; no functional changes for deb/PPA users.

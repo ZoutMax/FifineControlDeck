@@ -44,6 +44,21 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.10.0" date="2026-07-21">
+      <description>
+        <p>An idle app no longer burns a CPU core: a redundant USB rescan that
+        cost about 7% of a core continuously is throttled, so laptops get the
+        battery life back. A hand-edited config file that parses but has the
+        wrong shape is now preserved instead of being silently replaced and
+        overwritten, and a config from a newer version is backed up before it
+        is downgraded. The headless service and the GUI can no longer both
+        drive the deck and fire every key press twice. The key grid no longer
+        drifts apart into empty bands on a tall window, deselecting a key
+        clears both the settings panel and the key highlight, dropping an
+        action can no longer land on the wrong page, and the brightness slider
+        follows changes made from the deck.</p>
+      </description>
+    </release>
     <release version="0.9.0" date="2026-07-20">
       <description>
         <p>Release 0.9.0</p>

@@ -254,3 +254,90 @@ def test_load_reraises_io_error_instead_of_wiping_config(tmp_path, monkeypatch):
         DeckConfig.load(str(p))
     assert p.exists()                                   # good file untouched
     assert not (tmp_path / "config.json.corrupt").exists()
+
+
+def test_parseable_but_wrong_shaped_config_is_preserved_not_silently_reset(tmp_path):
+    """0.10.0 audit (critical, data loss): from_dict is total — _as_dict/_as_str
+    coerce anything parseable — so it could never raise for a wrong SHAPE, and
+    only a JSON syntax error ever reached the .corrupt recovery. A mistyped
+    top-level key loaded as an empty default profile with the real config left
+    in place and unbacked, and the first autosave 600 ms later overwrote the
+    user's only copy of their layout."""
+    import json
+    from fifine_deck.model import DeckConfig
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({                      # capital P: a hand-edit typo
+        "Profiles": [{"name": "mine", "pages": [{"keys": {}}]}],
+        "brightness": 42,
+    }))
+
+    cfg = DeckConfig.load(str(p))
+    cfg.save(str(p))                               # what the first autosave does
+
+    corpse = tmp_path / "config.json.corrupt"
+    assert corpse.exists(), "wrong-shaped config was destroyed, not preserved"
+    assert "mine" in corpse.read_text()            # the layout is recoverable
+    assert not (tmp_path / "config.json.bak").exists()   # import's backup is sacred
+
+
+def test_a_top_level_json_list_is_preserved_too(tmp_path):
+    """Same path via a different shape: valid JSON, not a dict at all."""
+    from fifine_deck.model import DeckConfig
+    p = tmp_path / "config.json"
+    p.write_text("[1, 2, 3]")
+    DeckConfig.load(str(p))
+    assert (tmp_path / "config.json.corrupt").read_text() == "[1, 2, 3]"
+
+
+def test_a_valid_config_is_never_moved_aside(tmp_path):
+    """The shape gate must not fire on anything the app itself writes,
+    including a profile that legitimately has no pages yet."""
+    import json
+    from fifine_deck.model import DeckConfig
+    p = tmp_path / "config.json"
+    DeckConfig().save(str(p))
+    assert DeckConfig.load(str(p)).profiles[0].name == "Default"
+    assert not (tmp_path / "config.json.corrupt").exists()
+
+    p.write_text(json.dumps({"profiles": [{"name": "empty", "pages": []}]}))
+    assert DeckConfig.load(str(p)).profiles[0].name == "empty"
+    assert not (tmp_path / "config.json.corrupt").exists()
+
+
+def test_a_newer_config_is_backed_up_before_it_is_downgraded(tmp_path, caplog):
+    """0.10.0 audit: from_dict keeps only the keys this build knows and save()
+    wrote the stripped result back under the NEWER version number — so every
+    setting a newer build added was destroyed, and that build could not even
+    tell it had been downgraded. The usual way in is syncing config.json
+    between two machines on different versions."""
+    import json
+    import logging
+    from fifine_deck.model import CONFIG_VERSION, DeckConfig
+    p = tmp_path / "config.json"
+    newer = CONFIG_VERSION + 1
+    p.write_text(json.dumps({
+        "version": newer,
+        "profiles": [{"name": "mine", "pages": [{"keys": {}}]}],
+        "a_setting_from_the_future": {"deep": [1, 2, 3]},
+    }))
+
+    with caplog.at_level(logging.WARNING, logger="fifine_deck.model"):
+        cfg = DeckConfig.load(str(p))
+    cfg.save(str(p))                                # strips the unknown setting
+
+    keep = tmp_path / f"config.json.v{newer}"
+    assert keep.exists(), "newer config was downgraded with no copy kept"
+    assert json.loads(keep.read_text())["a_setting_from_the_future"] == {"deep": [1, 2, 3]}
+    assert any("newer version" in r.message for r in caplog.records)
+    assert "a_setting_from_the_future" not in p.read_text()   # the real downgrade
+
+
+def test_a_same_version_config_is_not_backed_up(tmp_path):
+    """The backup must fire only on a real downgrade, not on every load."""
+    from fifine_deck.model import CONFIG_VERSION, DeckConfig
+    p = tmp_path / "config.json"
+    DeckConfig().save(str(p))
+    DeckConfig.load(str(p))
+    assert not (tmp_path / f"config.json.v{CONFIG_VERSION}").exists()
+    # no sibling copy of any kind (save() also makes a cfg/ dir; ignore that)
+    assert [f.name for f in tmp_path.glob("config.json.*")] == []

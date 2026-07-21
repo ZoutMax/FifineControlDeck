@@ -63,11 +63,15 @@ install -m 0644 "$HERE/packaging/io.github.zoutmax.FifineControlDeck.metainfo.xm
         "$STAGE/usr/share/metainfo/io.github.zoutmax.FifineControlDeck.metainfo.xml"
 
 # --- udev rule -----------------------------------------------------------
-# Use /lib/udev/rules.d: read by ALL udev versions (old non-merged-usr and
-# modern merged-usr distros alike), maximising cross-flavour compatibility.
-mkdir -p "$STAGE/lib/udev/rules.d"
+# /usr/lib/udev/rules.d, NOT /lib/udev/rules.d. On a merged-/usr system (noble
+# and later) /lib is a symlink into /usr/lib, so the old path was an aliased
+# location: DEP-17 forbids shipping there, and lintian errors on it at every
+# upload (aliased-location). The compatibility rationale for /lib no longer
+# holds — every systemd-era udev reads /usr/lib/udev/rules.d, including on the
+# non-merged systems the old comment was worried about.
+mkdir -p "$STAGE/usr/lib/udev/rules.d"
 install -m 0644 "$HERE/packaging/70-fifine-deck.rules" \
-        "$STAGE/lib/udev/rules.d/70-fifine-deck.rules"
+        "$STAGE/usr/lib/udev/rules.d/70-fifine-deck.rules"
 
 # --- docs: copyright + changelog ----------------------------------------
 DOCDIR="$STAGE/usr/share/doc/$PKG"

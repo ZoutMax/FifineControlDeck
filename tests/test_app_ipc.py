@@ -70,3 +70,34 @@ def test_autostart_cli_delegates_to_running_instance(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["fifine-control-deck", "--enable-autostart"])
     assert app.main() == 0
     assert sent == ["autostart-on"] and calls == [True]
+
+
+def test_headless_refuses_to_start_beside_another_instance(tmp_path, monkeypatch):
+    """0.10.0 audit: run_headless took no single-instance lock, so the shipped
+    systemd user service and the GUI could both open the deck. Linux delivers
+    input reports to every open reader, so one physical press fired its action
+    twice (a run_command ran twice, next_page skipped two pages) and the two
+    controllers repainted the LCDs over each other."""
+    from fifine_deck import app as fapp
+    monkeypatch.setattr(fapp, "CONFIG_DIR", str(tmp_path), raising=False)
+    monkeypatch.setattr("fifine_deck.model.CONFIG_DIR", str(tmp_path))
+
+    held = fapp._acquire_instance_lock()          # stand in for the other instance
+    assert held is not None
+    try:
+        started = []
+        monkeypatch.setattr(fapp, "DeckConfig", _Boom(started))
+        assert fapp.run_headless() == 1           # refused
+        assert started == [], "headless built a controller despite the lock"
+    finally:
+        os.close(held)
+
+
+class _Boom:
+    """Records any attempt to get as far as loading the config."""
+    def __init__(self, sink):
+        self._sink = sink
+
+    def load(self, *a, **k):
+        self._sink.append("load")
+        raise AssertionError("run_headless got past the single-instance lock")

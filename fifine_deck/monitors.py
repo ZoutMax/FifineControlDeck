@@ -183,6 +183,9 @@ class Sampler:
         # priming must be per thread too — a flag primed on one thread would
         # let another thread's first (garbage) reading through as real.
         self._cpu_primed_threads: set[int] = set()
+        # (stream key, error text) already logged — see sample(). Bounded by the
+        # number of configured monitor keys times their distinct failure modes.
+        self._logged_failures: set[tuple[str, str]] = set()
 
     # -- public ------------------------------------------------------------
     def sample(self, spec: MonitorSpec) -> Reading:
@@ -193,7 +196,17 @@ class Sampler:
         try:
             reading = fn(spec) if fn else Reading(None, "n/a", ok=False)
         except Exception as e:                      # a bad mount/iface must not
-            log.warning("monitor %s failed: %s", spec.metric, e)   # kill ticks
+            # Log each distinct failure ONCE. The caller re-samples every
+            # spec.interval regardless of the outcome (the unchanged-signature
+            # fast path suppresses only the repaint), and interval floors at
+            # 0.5 s — so one key pointed at a mistyped mount wrote ~172,800
+            # identical WARNING lines a day into the journal, forever, while
+            # the key face just read "n/a".
+            sig = (spec.key(), str(e))
+            if sig not in self._logged_failures:
+                self._logged_failures.add(sig)
+                log.warning("monitor %s failed (further identical failures "
+                            "will not be logged): %s", spec.metric, e)
             reading = Reading(None, "n/a", METRICS.get(spec.metric, ""), ok=False)
         k = spec.key()
         self._last[k] = reading

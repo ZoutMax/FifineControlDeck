@@ -49,6 +49,8 @@ override_dh_auto_install:
 	done
 	install -Dm644 assets/app/fifine-deck.png \
 	    $(PKGDIR)/usr/share/icons/hicolor/512x512/apps/fifine-control-deck.png
-	# udev rule (read by every udev version)
+	# udev rule. /usr/lib, not /lib: on merged-/usr (noble+) /lib aliases
+	# /usr/lib, which DEP-17 forbids shipping into and lintian errors on
+	# (aliased-location). Every systemd-era udev reads /usr/lib/udev/rules.d.
 	install -Dm644 packaging/70-fifine-deck.rules \
-	    $(PKGDIR)/lib/udev/rules.d/70-fifine-deck.rules
+	    $(PKGDIR)/usr/lib/udev/rules.d/70-fifine-deck.rules

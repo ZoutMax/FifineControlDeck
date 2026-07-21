@@ -213,7 +213,11 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
             _time.sleep(0.1)
             if _signal_existing("show"):
                 return 0
-        print("Another instance is starting but not responding.",
+        # The lock is held by something that will not answer the socket: either
+        # a GUI wedged mid-startup, or a headless instance, which holds the
+        # same lock by design and never listens on the socket at all.
+        print("Another fifine Control Deck instance holds the device.\n"
+              "If it is the headless service:  systemctl --user stop fifine-deck",
               file=sys.stderr)
         return 1
 
@@ -315,6 +319,20 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
 def run_headless() -> int:
     import time
     ensure_dirs()
+    # Same single-instance claim the GUI makes, and deliberately the SAME lock
+    # file: headless and GUI are two full controllers, so letting them coexist
+    # is the exact failure the GUI lock exists to prevent. Both would open the
+    # deck, Linux delivers each key report to every open reader, and one press
+    # fires its action twice (a run_command runs twice, next_page skips two);
+    # both also render onto the same LCDs, so the deck flickers between two
+    # views and the headless side — which never reloads config — repaints away
+    # the GUI's edits. Reachable as shipped: packaging/fifine-deck.service is
+    # WantedBy=default.target and README documents it beside the GUI autostart.
+    lock_fd = _acquire_instance_lock()
+    if lock_fd is None:
+        log.error("another fifine Control Deck instance is already running "
+                  "(GUI or headless); refusing to start a second one.")
+        return 1
     config = DeckConfig.load()
     controller = DeckController(config)
     ok = controller.start()

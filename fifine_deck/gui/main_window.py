@@ -30,6 +30,7 @@ class _Bridge(QObject):
     disconnected = pyqtSignal()
     keyEvent = pyqtSignal(int, bool)
     pageChanged = pyqtSignal()
+    brightnessChanged = pyqtSignal(int)
     monitorImage = pyqtSignal(int, object, str)   # (key index, PIL image, page id)
 
 
@@ -59,11 +60,15 @@ class MainWindow(QMainWindow):
         self.bridge.disconnected.connect(self._on_disconnected)
         self.bridge.keyEvent.connect(self._on_key_event)
         self.bridge.pageChanged.connect(self._on_external_page_change)
+        self.bridge.brightnessChanged.connect(self._on_brightness_changed)
         self.bridge.monitorImage.connect(self._on_monitor_image)
         controller.on_connect = lambda dev: self.bridge.connected.emit()
         controller.on_disconnect = lambda: self.bridge.disconnected.emit()
         controller.on_key_event = lambda i, p: self.bridge.keyEvent.emit(i, p)
         controller.on_page_changed = lambda: self.bridge.pageChanged.emit()
+        # Queued through the bridge like every other controller callback: a
+        # deck brightness key runs this on the SDK's reader thread.
+        controller.on_brightness_changed = lambda v: self.bridge.brightnessChanged.emit(v)
         controller.on_monitor_image = \
             lambda i, img, page_id="": self.bridge.monitorImage.emit(i, img, page_id)
 
@@ -185,7 +190,7 @@ class MainWindow(QMainWindow):
         self.bright.setValue(self.config.brightness)
         self._reload_profiles()
         self._rebuild_grid()
-        self.editor.clear()
+        self._deselect()
         self.controller.apply_brightness()
         self.controller.render_page()
         self.config.save()
@@ -266,9 +271,11 @@ class MainWindow(QMainWindow):
         self.grid.setSpacing(12)
         self.grid.setContentsMargins(24, 24, 24, 24)
         center = QHBoxLayout()
-        center.addStretch()
-        center.addWidget(self.grid_host)
-        center.addStretch()
+        # Align, don't stretch: given the whole central area the panel grows to
+        # fill it and QGridLayout hands the slack to the rows, so the key rows
+        # drift apart into big empty bands. Alignment keeps the panel at its
+        # size hint (keys packed at `spacing`) and centres it instead.
+        center.addWidget(self.grid_host, 0, Qt.AlignmentFlag.AlignCenter)
         wrap = QWidget()
         wrap.setLayout(center)
         root.addWidget(wrap, 1)
@@ -439,7 +446,7 @@ class MainWindow(QMainWindow):
         self._reload_knobs()
         self._refresh_all_previews()
         self.controller.render_page()
-        self.editor.clear()
+        self._deselect()
 
     def _add_profile(self):
         name, ok = QInputDialog.getText(self, "New profile", "Name:")
@@ -503,8 +510,7 @@ class MainWindow(QMainWindow):
         # deleting the page at index 0 keeps (container, page_index) equal,
         # so it sees "no change" — and edits would then flow into the deleted
         # Page's objects and silently vanish on restart (0.8.1 audit).
-        self.editor.clear()
-        self.selected_index = None
+        self._deselect()
         self._last_page_key = None       # force the next resync to treat this as a change
         self._reload_knobs()
         self._reload_pages()
@@ -518,9 +524,16 @@ class MainWindow(QMainWindow):
             return
         labels = [self.page_combo.itemText(i) for i in range(self.page_combo.count())]
         dlg = ReorderDialog("Reorder pages", labels, self)
-        if not dlg.exec():
-            return
-        order = dlg.order()
+        try:
+            if not dlg.exec():
+                return
+            order = dlg.order()
+        finally:
+            # Parented to the long-lived MainWindow, so without this every
+            # click retains a hidden dialog and its populated list widget for
+            # the process lifetime — the same leak already fixed explicitly for
+            # IconLibraryDialog and QColorDialog. Cancel leaked one too.
+            dlg.deleteLater()
         if order == list(range(len(cont.pages))):
             return
         current_id = cont.pages[self.controller.page_index].id
@@ -537,9 +550,12 @@ class MainWindow(QMainWindow):
             return
         labels = [p.name for p in self.config.profiles]
         dlg = ReorderDialog("Reorder profiles", labels, self)
-        if not dlg.exec():
-            return
-        order = dlg.order()
+        try:
+            if not dlg.exec():
+                return
+            order = dlg.order()
+        finally:
+            dlg.deleteLater()               # see _reorder_pages
         if order == list(range(len(self.config.profiles))):
             return
         self.config.profiles = [self.config.profiles[i] for i in order]
@@ -547,6 +563,22 @@ class MainWindow(QMainWindow):
         self._queue_save()
 
     # -- editing -----------------------------------------------------------
+    def _deselect(self):
+        """Drop the key selection everywhere it is visible.
+
+        The editor and the grid are two halves of one piece of state, and only
+        the editor half was ever reset: every caller cleared the panel but left
+        the key button drawn with its blue :checked border, so after a page or
+        profile switch the grid claimed a key was selected while the panel said
+        "No key selected" — the same contradiction 0.10.0 fixes inside the
+        panel. Two of the four callers also left selected_index pointing at the
+        old key. One helper so a new caller cannot get half of it right.
+        """
+        for b in self.buttons.values():
+            b.setChecked(False)
+        self.editor.clear()
+        self.selected_index = None
+
     def _on_key_selected(self, index: int):
         self.selected_index = index
         for i, b in self.buttons.items():
@@ -706,6 +738,22 @@ class MainWindow(QMainWindow):
         self.controller.set_brightness(v)
         self._queue_save()
 
+    def _on_brightness_changed(self, v: int):
+        """Brightness changed from the deck: follow it with the slider.
+
+        blockSignals, or setValue re-enters _on_brightness and pushes the value
+        straight back at the device. Queue a save here too — the deck path had
+        none, so a brightness set from the deck was lost on restart.
+        """
+        if self.bright.value() == v:
+            return
+        self.bright.blockSignals(True)
+        try:
+            self.bright.setValue(v)
+        finally:
+            self.bright.blockSignals(False)
+        self._queue_save()
+
     # -- controller callbacks (GUI thread via bridge) ---------------------
     def _on_connected(self):
         self._set_status()
@@ -762,8 +810,7 @@ class MainWindow(QMainWindow):
         self._refresh_all_previews()
         self._update_breadcrumb()
         if changed:
-            self.editor.clear()
-            self.selected_index = None
+            self._deselect()
 
     def _set_status(self):
         from ..actions import environment_summary

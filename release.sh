@@ -59,8 +59,12 @@ PYEOF
 command -v appstreamcli >/dev/null && appstreamcli validate packaging/*.metainfo.xml
 
 echo ">> committing + tagging v$VERSION"
-git add snap/snapcraft.yaml debian/changelog CHANGELOG.md \
-        packaging/*.metainfo.xml
+# Stage EVERYTHING, not just the version files. Staging a fixed list meant an
+# uncommitted source fix stayed uncommitted: `git add` on an already-clean path
+# is a silent no-op, so the tag landed on a commit containing the new CHANGELOG
+# claims and none of the code that backed them, and the release CI then built
+# the .deb from that tag. The release must be the tree that was tested.
+git add -A
 git "${GIT_ID[@]}" commit -m "release: v$VERSION
 
 $MSG"
