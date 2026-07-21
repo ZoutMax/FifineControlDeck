@@ -298,17 +298,15 @@ def test_release_workflow_validates_the_metadata_it_publishes():
     python-package.yml, which fires on branch pushes. release.yml inherited the
     gate purely because release.sh pushes main and the tag together — a tag-only
     push or a re-tag published a .deb whose metainfo.xml nothing had checked."""
-    import yaml
-    wf = yaml.safe_load(_read(".github/workflows/release.yml"))
-    steps = wf["jobs"]["release"]["steps"]
-    runs = "\n".join(s.get("run", "") for s in steps)
-    assert "appstreamcli validate" in runs, "release publishes unvalidated AppStream metadata"
-    assert "desktop-file-validate" in runs, "release publishes an unvalidated .desktop"
+    # Plain text, not PyYAML: CI installs only PyQt6/Pillow/psutil/pyudev and
+    # the test tooling, so importing yaml here failed the very release it was
+    # added to guard.
+    src = _read(".github/workflows/release.yml")
+    job = src[src.index("\n  release:"):]        # release is the last job
+    assert "appstreamcli validate" in job, "release publishes unvalidated AppStream metadata"
+    assert "desktop-file-validate" in job, "release publishes an unvalidated .desktop"
     # ...and the tools it needs must actually be installed in that job
-    assert "appstream" in runs and "desktop-file-utils" in runs, \
+    assert "appstream" in job and "desktop-file-utils" in job, \
         "validation step would fail: tools never installed"
-    build_at = next(i for i, s in enumerate(steps)
-                    if "build-deb.sh" in s.get("run", ""))
-    validate_at = next(i for i, s in enumerate(steps)
-                       if "appstreamcli validate" in s.get("run", ""))
-    assert validate_at < build_at, "validation must gate the build, not follow it"
+    assert job.index("appstreamcli validate") < job.index("build-deb.sh"), \
+        "validation must gate the build, not follow it"
