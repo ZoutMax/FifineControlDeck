@@ -160,7 +160,18 @@ rule and reload udev, and the app never retries. The only in-app reconnect is
 `None` outside a snap — so a .deb, PPA or source user has no reconnect path at
 all. The "unplug and replug" line in the docs is what saves this today.
 
-### 6. A permission failure looks identical to "no deck", and a half-open handle reports as connected
+### 6. A permission failure looks identical to "no deck", and a half-open handle reports as connected — **FIXED**
+
+> Fixed after 0.10.2. `_setup_device` now rejects a handle that opens but
+> returns no firmware — the libusb false-connect — closing it and reporting not
+> connected, matching what `try_open` already did. It also records a
+> user-facing `controller.last_error`, which the status bar shows as
+> "⚠ deck not usable" plus the reason, instead of the "○ no device" it used to
+> show for an unplugged deck and a permission-blocked one alike.
+> Covered by three tests in `tests/test_controller.py`.
+
+The original problem, for reference:
+
 
 `controller.py:190`, `controller.py:125`, `main_window.py:772-776`
 
@@ -203,7 +214,35 @@ amount.
   discards. Nothing distinguishes "written" from "swallowed by a dead handle",
   which is what makes issues 1 and 6 invisible to the user.
 
-### 9. ~2 s of every shutdown is spent inside `controller.stop()`
+### 9. ~2 s of every shutdown is spent inside `controller.stop()` — **CAUSE CONFIRMED, PARTLY MITIGATED**
+
+> Traced after 0.10.2. Step-by-step profiling with the device free puts the
+> entire cost in one place:
+>
+> | step | time |
+> |---|---|
+> | `_cancel_holds`, `_monitor_stop.set`, queue, `set_key_callback(None)` | 0.000 s |
+> | `stop_gif_loop`, `clearAllIcon`, `refresh` | 0.000 s |
+> | read-thread join | 0.093 s |
+> | `disconnected()` packet | 0.000 s |
+> | **`transport.close()`** | **2.001 s** |
+>
+> `transport.close()` is a single call into `transport_destroy` in the prebuilt
+> `libtransport.so`. That is a **vendored binary blob**, so the 2.0 s cannot be
+> removed without rebuilding someone else's library. The suspiciously round
+> figure suggests an internal timeout rather than real work.
+>
+> Mitigated where we can: `MainWindow._quit` now hides the window and the tray
+> icon and paints that before running the teardown, so quitting looks immediate
+> instead of leaving a frozen window on screen for two seconds. The teardown
+> still runs synchronously to completion — it has to, since it clears the key
+> LCDs and releases the device.
+>
+> The original text below is superseded; the guess about `clearAllIcon()` was
+> **wrong** — that call measures 0.000 s.
+
+The original, incorrect speculation:
+
 
 `controller.py` (`stop()`), and what it calls: `stop_gif_loop()`, `clearAllIcon()`
 

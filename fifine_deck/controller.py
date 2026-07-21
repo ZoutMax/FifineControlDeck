@@ -93,6 +93,11 @@ class DeckController:
         # the GUI slider can follow. Without it the slider kept its stale value
         # and the next one-step nudge slammed the device back to it.
         self.on_brightness_changed: Optional[Callable[[int], None]] = None
+        # Why the last open attempt failed, in words meant for the user, or ""
+        # when there is nothing to explain. A deck that is plugged in but
+        # unopenable (no udev rule) and a deck that is simply absent are very
+        # different problems, and the status bar showed "○ no device" for both.
+        self.last_error: str = ""
 
         register()
 
@@ -192,12 +197,36 @@ class DeckController:
         try:
             if not dev.open():
                 log.warning("open() failed (permissions? udev rule installed?)")
+                # Record WHY, so the GUI can say something better than the
+                # "○ no device" it shows for an unplugged deck. A deck that is
+                # physically present but unusable because the udev rule is not
+                # installed is a completely different problem for the user, and
+                # the two were indistinguishable.
+                self.last_error = ("The deck is connected but could not be "
+                                   "opened — this is almost always the udev "
+                                   "rule missing, or you not being in the "
+                                   "'plugdev' group.")
                 from .actions import snap_usb_hint
                 hint = snap_usb_hint()
                 if hint:
                     log.warning("%s", hint)
                 return False
             dev.init()
+            # A handle with no firmware is the libusb "false connect": open()
+            # succeeded but the device will not talk, so every key is dead.
+            # try_open already rejects this state; _setup_device used to accept
+            # it and report "● connected  fw=" with nothing working.
+            if not dev.firmware_version:
+                log.warning("device opened but returned no firmware — treating "
+                            "as not connected (access is probably blocked)")
+                self.last_error = ("The deck answered without identifying "
+                                   "itself, so it cannot be driven. Check the "
+                                   "udev rule, then replug it.")
+                try:
+                    dev.close()
+                except Exception:
+                    log.debug("close() after a false-connect failed", exc_info=True)
+                return False
             self._cancel_holds()        # a replug starts with a clean slate
             with self._lock:
                 self.device = dev
@@ -206,6 +235,7 @@ class DeckController:
                 # the GUI clear its editor and drop an open picker's result.
                 # page_index defaults to 0 for the initial connect, and
                 # render_page/current_page clamp it, so preserving it is safe.
+            self.last_error = ""            # a working handle clears the reason
             dev.set_key_callback(self._key_callback)
             self.apply_brightness()
             self.render_page()

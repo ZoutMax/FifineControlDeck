@@ -501,3 +501,54 @@ def test_a_device_that_never_opened_is_not_closed():
     c = DeckController(DeckConfig())
     assert c._setup_device(_Shut()) is False
     assert _Shut.closed == 0
+
+
+def test_a_handle_with_no_firmware_is_not_reported_as_connected():
+    """0.10.2 audit: _setup_device returned True even when firmware_version was
+    empty — the libusb "false connect" a locked-out install gets before the udev
+    rule exists. The status bar then read "connected fw=" with every key dead
+    and no retry anywhere. try_open already rejected this state."""
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+
+    class _Mute(MockDevice):
+        firmware_version = ""          # opens, but will not identify itself
+        closed = 0
+
+        def open(self):
+            return True
+
+        def close(self, *a, **k):
+            _Mute.closed += 1
+
+    c = DeckController(DeckConfig())
+    assert c._setup_device(_Mute()) is False
+    assert c.device is None
+    assert _Mute.closed == 1, "the unusable handle was left open"
+    assert "udev" in c.last_error, "no user-facing reason recorded"
+
+
+def test_a_failed_open_records_why_for_the_ui():
+    """"○ no device" was shown both for an absent deck and for a present one we
+    lack permission to open — completely different problems for the user."""
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+
+    class _Denied(MockDevice):
+        def open(self):
+            return False
+
+    c = DeckController(DeckConfig())
+    assert c._setup_device(_Denied()) is False
+    assert c.last_error, "no reason recorded for a permission failure"
+    assert "plugdev" in c.last_error or "udev" in c.last_error
+
+
+def test_a_working_device_clears_the_error():
+    """The reason must not stick around after a successful connect."""
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+    c = DeckController(DeckConfig())
+    c.last_error = "stale"
+    assert c._setup_device(MockDevice()) is True
+    assert c.last_error == ""

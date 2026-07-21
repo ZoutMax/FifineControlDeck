@@ -892,7 +892,15 @@ class MainWindow(QMainWindow):
         fw = ""
         if self.controller.connected and self.controller.device:
             fw = f"  fw={self.controller.device.firmware_version}"
-        self.statusBar().showMessage(f"{state}{fw}   |   {environment_summary()}")
+        # A deck that is plugged in but cannot be opened is a different problem
+        # from one that is absent, and both used to read "○ no device". Say
+        # which, when the controller knows.
+        reason = ""
+        if not self.controller.connected and getattr(self.controller, "last_error", ""):
+            state = "⚠ deck not usable"
+            reason = f"  {self.controller.last_error}"
+        self.statusBar().showMessage(
+            f"{state}{fw}{reason}   |   {environment_summary()}")
 
     def maybe_show_snap_hint(self):
         """Under a snap, if the deck isn't actually usable, guide the user to fix
@@ -992,8 +1000,24 @@ class MainWindow(QMainWindow):
             # running with the controller half-stopped (Ctrl+Q previously
             # aborted here, stopping nothing).
             log.error("save on quit failed: %s", e)
-        self.controller.stop()
+        # Take the UI down BEFORE the teardown, so quit looks immediate.
+        #
+        # controller.stop() blocks ~2.0 s, and profiling attributes essentially
+        # all of it to transport_destroy inside the prebuilt libtransport.so —
+        # a vendored binary we cannot patch (every other phase measures 0.00 s;
+        # the read-thread join is 0.09 s). Running that on the Qt thread meant
+        # the window sat there frozen for two seconds after the user asked to
+        # quit, which reads as a hang.
+        #
+        # The teardown still runs to completion, synchronously, before
+        # QApplication.quit() — it must, because it clears the key LCDs and
+        # releases the device. Only the window goes first.
         from PyQt6.QtWidgets import QApplication
+        self.hide()
+        if self.tray is not None:
+            self.tray.hide()
+        QApplication.processEvents()      # actually paint the disappearance
+        self.controller.stop()
         QApplication.quit()
 
 
