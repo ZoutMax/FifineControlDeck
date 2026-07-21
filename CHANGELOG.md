@@ -4,6 +4,50 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.11.0] - 2026-07-21
+
+Clears the audit backlog: every open finding from the pre-0.10.0 reviews is
+fixed except one, which is documented rather than rushed. Most of this is in
+the device layer, where the app was doing the wrong thing quietly.
+
+### Fixed
+- **A quick unplug-and-replug no longer leaves the deck dead.** Reconciliation
+  compared device *paths*, and `/dev/hidrawN` is reused — so a replug that
+  completed within about a second looked like nothing had happened. The app
+  kept a handle on a torn-down connection: every key silently dead, the status
+  bar still reading "connected", and no way back except restarting. It now
+  compares the identity of the device node itself, which changes when the node
+  is recreated. Confirmed with a real replug.
+- **Installing the udev rule now takes effect without a restart.** The
+  `udevadm trigger` command the documentation tells you to run emits a "change"
+  event, and the app ignored those entirely — so the documented fix for "no
+  device access" could never work while the app was running.
+- **A deck that is plugged in but unusable no longer claims to be connected.**
+  A handle that opened but never identified itself was reported as a working
+  connection, showing "connected" with every key dead. The status bar now
+  distinguishes a deck that is absent from one it cannot open, and says which.
+- **The hotplug watchdog can no longer be starved.** Its periodic rescan ran
+  only after a full minute with no USB activity of any kind, so on a machine
+  with a webcam or dock it could go hours without running. It now runs on a
+  schedule. A failure to start the hotplug listener also falls back to polling
+  instead of leaving hotplug dead for the session.
+- **Animated keys no longer re-decode on every page switch.** Switching pages,
+  profiles or folders decoded and re-encoded every frame of every animated key
+  again from scratch, on the UI thread. Measured on a 90-frame animation: 244ms
+  before, 0ms once cached. The first decode of each file still costs that, and
+  is tracked in `docs/KNOWN-ISSUES.md`.
+- **Unplugging during quit can no longer crash the app**, and a stale frame can
+  no longer be left lit on a key after the app closes.
+- **Typing keys, password keys and config export now say what they are doing.**
+  A "Type text" key with no keystroke tool installed did nothing silently; a
+  password key typed an empty string when the keyring was locked; exporting a
+  configuration wrote a plaintext password into the file with no warning.
+- **`--enable-autostart` no longer reports success without doing anything**
+  when the autostart entry was changed behind the running app's back.
+- **The window no longer appears frozen for two seconds when quitting.** The
+  remaining delay is inside a vendored binary and cannot be removed here; the
+  window now closes immediately while cleanup finishes.
+
 ## [0.10.2] - 2026-07-21
 
 ### Fixed

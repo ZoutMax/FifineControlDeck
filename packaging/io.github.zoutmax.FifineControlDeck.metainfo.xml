@@ -44,6 +44,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.11.0" date="2026-07-21">
+      <description>
+        <p>Clears the audit backlog, mostly in the device layer. A quick unplug and replug no longer leaves the deck dead while the app still says it is connected; installing the udev rule now takes effect without a restart; a deck that is plugged in but unusable is reported honestly instead of as connected; animated keys no longer re-decode on every page switch; unplugging during quit can no longer crash the app; and typing keys, password keys and config export now say what they are doing instead of failing silently.</p>
+      </description>
+    </release>
     <release version="0.10.2" date="2026-07-21">
       <description>
         <p>Fixes two shutdown defects in the device layer. Pulling the cable while an animated key is playing could free the USB handle underneath a thread still writing to it, killing the app instead of disconnecting cleanly. Quitting no longer waits out the keep-alive timer: across repeated tests, shutdown went from between 2.9 and 30 seconds, sometimes failing outright, to a consistent 2.8 to 3.1 seconds.</p>
