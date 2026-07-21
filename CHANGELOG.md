@@ -4,6 +4,18 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.11.1] - 2026-07-21
+
+### Fixed
+- **Animated keys no longer stall the window the first time they appear.**
+  0.11.0 stopped re-decoding an animation every time you switched to its page,
+  but the very first decode still ran on the interface thread — about a quarter
+  of a second of frozen window per animated key, and key presses arriving in
+  that window were handled late. Decoding now happens on its own thread: the
+  key shows its static face immediately and starts animating a moment later.
+  Measured with a 90-frame animation, the interface thread's share went from
+  ~244ms to 0.1ms.
+
 ## [0.11.0] - 2026-07-21
 
 Clears the audit backlog: every open finding from the pre-0.10.0 reviews is

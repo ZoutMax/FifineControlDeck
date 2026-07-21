@@ -44,6 +44,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.11.1" date="2026-07-21">
+      <description>
+        <p>Animated keys no longer stall the window the first time they appear. Decoding an animation now happens on its own thread, so the key shows its static face immediately and starts animating a moment later, instead of freezing the interface for about a quarter of a second per animated key.</p>
+      </description>
+    </release>
     <release version="0.11.0" date="2026-07-21">
       <description>
         <p>Clears the audit backlog, mostly in the device layer. A quick unplug and replug no longer leaves the deck dead while the app still says it is connected; installing the udev rule now takes effect without a restart; a deck that is plugged in but unusable is reported honestly instead of as connected; animated keys no longer re-decode on every page switch; unplugging during quit can no longer crash the app; and typing keys, password keys and config export now say what they are doing instead of failing silently.</p>
