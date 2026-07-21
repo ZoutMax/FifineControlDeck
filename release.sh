@@ -6,7 +6,7 @@
 # What it does (safe, no publishing side effects):
 #   1. bumps the version in snap/snapcraft.yaml and adds a debian/changelog entry
 #   2. commits (as ZoutMax, no AI attribution), tags v<version>
-#   3. pushes main + tags to BOTH remotes (GitHub origin + Launchpad mirror)
+#   3. pushes main + tags to GitHub (origin)
 # Then it prints the exact publish commands (snap + PPA) for you to run when ready.
 set -euo pipefail
 
@@ -81,9 +81,15 @@ else
   git tag -a "v$VERSION" -m "v$VERSION"
 fi
 
-echo ">> pushing to GitHub (origin) + Launchpad (launchpad)"
+# GitHub only. The Launchpad git remote was a mirror and nothing consumed it:
+# the PPA is fed by `dput` of a source package (see below) and the snap builds
+# from GitHub, so the mirror served no channel. It also broke — SSH still
+# authenticates as zoutmax but the repository read fails, leaving the mirror
+# 16 commits behind as of v0.10.0 — and a `set -e` script that pushed to it
+# second would abort AFTER publishing to GitHub, so every release half-failed
+# at the last line. Removed rather than left to fail.
+echo ">> pushing to GitHub (origin)"
 git push origin main --tags
-GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new" git push launchpad main --tags
 
 cat <<EOF
 
