@@ -80,11 +80,23 @@ whole process down.
 >
 > Measured on real hardware, phase by phase, after the fix:
 > `gif_controller.close()` 0.00 s, **heartbeat join 0.00 s (was a guaranteed
-> 2.0 s)**, read thread join 0.09 s. End to end, `--quit` went from exceeding its
-> 10 s deadline and reporting failure, to 6.34 s and reporting success.
+> 2.0 s)**, read thread join 0.09 s.
+>
+> End to end, A/B over three start-and-quit cycles through one harness on the
+> same machine:
+>
+> | SDK | trials | mean |
+> |---|---|---|
+> | original | **30.01 s (hung, reported failure)**, 5.74 s, 2.93 s | 12.89 s |
+> | fixed | 2.93 s, 3.14 s, 2.77 s | **2.95 s** |
+>
+> The mean is the less interesting half. The old SDK was *unpredictable* — one
+> run hung past 30 s and never reported success while another finished in under
+> three seconds, which is the signature of a thread stuck in a native call. The
+> fixed SDK stays inside 2.77–3.14 s and always succeeds.
 >
 > **~2 s of the remaining shutdown is elsewhere** — see issue 9 below, which the
-> same measurement turned up.
+> same profiling turned up.
 
 The original problem, for reference:
 
@@ -213,9 +225,8 @@ monitor sampler shutdown, but that has **not** been confirmed — the profile
 above only narrows it to "inside `stop()`". Profile it further before changing
 anything.
 
-Worth noting that the end-to-end `--quit` figure (6.34 s) is larger than the sum
-here, so the IPC round trip and Qt teardown carry cost of their own that has not
-been attributed yet.
+It accounts for most, but not all, of the ~2.95 s a full quit now takes; the IPC
+round trip and Qt teardown carry the rest and have not been attributed.
 
 ---
 

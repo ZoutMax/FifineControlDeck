@@ -44,6 +44,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.10.2" date="2026-07-21">
+      <description>
+        <p>Fixes two shutdown defects in the device layer. Pulling the cable while an animated key is playing could free the USB handle underneath a thread still writing to it, killing the app instead of disconnecting cleanly. Quitting no longer waits out the keep-alive timer: across repeated tests, shutdown went from between 2.9 and 30 seconds, sometimes failing outright, to a consistent 2.8 to 3.1 seconds.</p>
+      </description>
+    </release>
     <release version="0.10.1" date="2026-07-21">
       <description>
         <p>Fixes two regressions from 0.10.0: a config with no profiles was treated as corrupt and its brightness and other settings reset, and the window failed to open with no visible message when the background service already held the deck.</p>
