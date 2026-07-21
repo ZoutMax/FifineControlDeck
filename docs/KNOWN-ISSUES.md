@@ -427,15 +427,19 @@ stays off.
 build. It is a prebuilt third-party binary, so stripping it is a decision about
 someone else's artifact rather than a straightforward fix. Not an upload blocker.
 
-### Launchpad references outliving the mirror
+### Launchpad references outliving the mirror — **RESOLVED**
 
-The Launchpad git mirror was removed from `release.sh` after v0.10.0 (SSH still
-authenticates but the repository read fails, and the mirror sat 16 commits
-behind). `README.md`, `docs/index.html`, `docs/SNAP.md`, `docs/PROVENANCE.md` and
-`docs/PPA.md` still mention Launchpad. Most of those refer to the **PPA**, which
-is live and correct and is fed by `dput`, not by the git mirror — so they were
-left alone deliberately. They need a pass once it is settled whether the
-Launchpad repository is dead or merely moved.
+The Launchpad git mirror was removed from `release.sh` after v0.10.0: SSH still
+authenticates but the repository read fails, and it had drifted 16 commits
+behind. It fed no publishing channel — the PPA is fed by `dput` and the snap
+builds from GitHub — so nothing was lost with it.
+
+The docs were left alone at the time pending a decision on whether the mirror
+was dead or merely moved. Settled now: the **PPA is demonstrably live** (0.11.1
+uploaded and accepted for noble, 0.11.1ppa1 for resolute), so every PPA
+reference in `README.md` and `docs/PPA.md` is correct and stays. The one stale
+item was the `code mirror` link in `README.md`, which pointed at a repository
+roughly eighteen commits behind — removed.
 
 ---
 

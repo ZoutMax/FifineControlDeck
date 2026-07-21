@@ -23,8 +23,7 @@ with profiles, multiple pages, a configuration GUI, and a system tray.
 - **Source (GitHub):** <https://github.com/ZoutMax/FifineControlDeck>
   ([Releases](https://github.com/ZoutMax/FifineControlDeck/releases) ·
   [Issues](https://github.com/ZoutMax/FifineControlDeck/issues))
-- **Launchpad project:** <https://launchpad.net/fifine-control-deck>
-  ([code mirror](https://code.launchpad.net/~zoutmax/fifine-control-deck/+git/fifine-control-deck-linux))
+- **Launchpad project:** <https://launchpad.net/fifine-control-deck> (hosts the PPA)
 
 Available for **amd64** and **arm64** via the PPA and `.deb`.
 
