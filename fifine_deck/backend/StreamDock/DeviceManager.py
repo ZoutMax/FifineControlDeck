@@ -1,3 +1,4 @@
+import os
 import platform
 import threading
 import time
@@ -113,10 +114,35 @@ class DeviceManager:
         else:
             print(f"Unsupported operating system: {system}")
 
+    @staticmethod
+    def _node_identity(path):
+        """Identity of the device NODE behind `path`, or None if unknowable.
+
+        LOCAL PATCH. Reconciling by path string alone cannot see a replug:
+        /dev/hidrawN is reused, so after unplug-and-back the same string names a
+        different physical connection. devtmpfs destroys and recreates the node,
+        so (st_dev, st_ino) changes even when the name does not — which is
+        exactly the signal that a cached device object is now stale.
+
+        Serial number is no help here: this deck reports a real one, but it is
+        the same device, so it is identical before and after.
+        """
+        try:
+            st = os.stat(path)
+            return (st.st_dev, st.st_ino)
+        except OSError:
+            return None            # unknowable -> callers fall back to path-only
+
     def _create_device(self, class_type, device_info):
         device_info_struct = LibUSBHIDAPI.create_device_info_from_dict(device_info)
         device_transport = LibUSBHIDAPI(device_info_struct)
-        return class_type(device_transport, device_info)
+        device = class_type(device_transport, device_info)
+        # Stamp the node identity as seen at creation, for _remove_missing_devices.
+        try:
+            device._node_identity = self._node_identity(device_info.get("path", ""))
+        except Exception:
+            device._node_identity = None
+        return device
 
     def _device_exists(self, device_path):
         return any(device.getPath() == device_path for device in self.streamdocks)
@@ -199,9 +225,26 @@ class DeviceManager:
         current_paths = self._current_device_paths(products)
 
         with self._device_lock:
-            devices_to_remove = [
-                device for device in self.streamdocks if device.getPath() not in current_paths
-            ]
+            devices_to_remove = []
+            for device in self.streamdocks:
+                path = device.getPath()
+                if path not in current_paths:
+                    devices_to_remove.append(device)
+                    continue
+                # LOCAL PATCH: the path being present is NOT proof this object
+                # is still valid. A replug that completes before the remove
+                # retries finish (~0.6 s) leaves /dev/hidrawN in place, so the
+                # old comparison removed nothing, the following "add" hit the
+                # _device_exists(path) guard and announced nothing, and the
+                # owner kept a handle onto a torn-down node: every write
+                # silently swallowed, status still "connected", no key working,
+                # and no recovery short of a restart. Compare the node identity
+                # so a recreated node is recognised as a different connection.
+                was = getattr(device, "_node_identity", None)
+                now = self._node_identity(path)
+                if was is not None and now is not None and was != now:
+                    print(f"[stale] {path} was recreated (node identity changed)")
+                    devices_to_remove.append(device)
 
         for device in devices_to_remove:
             print(f"[remove] path: {device.getPath()}")
@@ -343,11 +386,19 @@ class DeviceManager:
             return
 
         if action == "remove":
+            removed_devices = []
             for _ in range(3):
                 removed_devices = self._remove_missing_devices(products)
                 if removed_devices:
                     break
                 time.sleep(0.2)
+            # LOCAL PATCH: re-add immediately after a removal. On a fast replug
+            # the "add" uevent can arrive while the stale entry is still cached,
+            # so it gets skipped by the _device_exists guard; without this the
+            # deck then waits for the next add event or the 60 s rescan even
+            # though it is plugged in right now.
+            if removed_devices:
+                self._add_missing_devices(products)
             return
 
         for _ in range(10):

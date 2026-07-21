@@ -338,3 +338,112 @@ def test_pyudev_setup_failure_falls_back_instead_of_killing_the_thread():
     head = src[:src.index("while True")]
     assert "try:" in head and "_fallback_polling" in head, (
         "pyudev setup is still unguarded")
+
+
+# -- the fast-replug wedge ---------------------------------------------------
+
+class _FakeDock:
+    """Just enough of a StreamDock for the reconciliation code."""
+
+    def __init__(self, path, identity):
+        self._path = path
+        self._node_identity = identity
+        self.closed = 0
+
+    def getPath(self):
+        return self._path
+
+    def close(self, *a, **k):
+        self.closed += 1
+
+
+def _manager_with(devices, current_paths):
+    dm = _device_manager_module()
+    mgr = object.__new__(dm.DeviceManager)
+    mgr._device_lock = threading.RLock()
+    mgr.streamdocks = list(devices)
+    mgr._on_device_removed = None
+    mgr._on_device_added = None
+    mgr._on_device_changed = None
+    mgr._current_device_paths = lambda products: set(current_paths)
+    return mgr
+
+
+def test_a_replug_that_reuses_the_path_is_still_detected_as_a_replug(tmp_path):
+    """0.10.2 audit, issue 1: reconciliation compared PATH strings only. A
+    replug completing inside the ~0.6 s remove-retry window leaves /dev/hidrawN
+    in place, so nothing was removed; the following "add" then hit the
+    _device_exists(path) guard and announced nothing, and the owner kept a
+    handle onto a torn-down node — writes silently swallowed, status still
+    "connected", no key working, no recovery short of a restart."""
+    node = tmp_path / "hidraw0"
+    node.write_text("")                       # stand-in for the device node
+    dm = _device_manager_module()
+    before = dm.DeviceManager._node_identity(str(node))
+
+    dev = _FakeDock(str(node), before)
+    # the node is destroyed and recreated, exactly as devtmpfs does on replug
+    node.unlink()
+    node.write_text("")
+    after = dm.DeviceManager._node_identity(str(node))
+    assert before != after, "test setup failed to change the node identity"
+
+    mgr = _manager_with([dev], [str(node)])   # path IS still present
+    removed = mgr._remove_missing_devices([])
+
+    assert removed == [dev], "a recreated node was not recognised as a replug"
+    assert dev.closed == 1, "the stale device was not closed"
+
+
+def test_an_unchanged_node_is_left_alone(tmp_path):
+    """The identity check must not evict a device that never went away."""
+    node = tmp_path / "hidraw0"
+    node.write_text("")
+    dm = _device_manager_module()
+    dev = _FakeDock(str(node), dm.DeviceManager._node_identity(str(node)))
+
+    mgr = _manager_with([dev], [str(node)])
+    assert mgr._remove_missing_devices([]) == []
+    assert dev.closed == 0
+
+
+def test_a_genuinely_absent_path_is_still_removed(tmp_path):
+    """The original behaviour has to survive: a path that is gone is gone."""
+    dev = _FakeDock(str(tmp_path / "hidraw9"), None)
+    mgr = _manager_with([dev], [])            # nothing enumerated
+    assert mgr._remove_missing_devices([]) == [dev]
+
+
+def test_unknowable_identity_falls_back_to_path_only(tmp_path):
+    """If the node cannot be stat'd we must not invent a replug and evict a
+    working device."""
+    node = tmp_path / "hidraw0"
+    node.write_text("")
+    dev = _FakeDock(str(node), None)          # identity never recorded
+    mgr = _manager_with([dev], [str(node)])
+    assert mgr._remove_missing_devices([]) == []
+    assert dev.closed == 0
+
+
+def test_a_removal_immediately_tries_to_re_add():
+    """On a fast replug the add uevent can land while the stale entry is still
+    cached and be skipped, so removal must re-add rather than leave the deck
+    waiting for the next event or the 60 s rescan."""
+    dm = _device_manager_module()
+    mgr = object.__new__(dm.DeviceManager)
+    calls = []
+    mgr._remove_missing_devices = lambda products: ["something"]
+    mgr._add_missing_devices = lambda products: calls.append("add")
+    mgr._handle_device_event("remove", None, [])
+    assert calls == ["add"], "a removal did not attempt an immediate re-add"
+
+
+def test_a_removal_that_removed_nothing_does_not_re_add():
+    """No churn when the remove event was not ours."""
+    dm = _device_manager_module()
+    mgr = object.__new__(dm.DeviceManager)
+    calls = []
+    mgr._remove_missing_devices = lambda products: []
+    mgr._add_missing_devices = lambda products: calls.append("add")
+    mgr._handle_device_event("remove", None, [])
+    assert calls == []

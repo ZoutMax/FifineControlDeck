@@ -14,8 +14,8 @@ long-standing behaviours that predate both.
 
 ## Device layer and the vendored SDK
 
-**Status:** issues 2, 3, 4, 5 and 6 are fixed and verified on hardware, and 9's
-cause is confirmed and partly mitigated. Issues 1, 7 and 8 remain open.
+**Status:** issues 1-6 are fixed (1 awaits a physical replug to confirm) and 9's
+cause is confirmed and partly mitigated. Issues 7 and 8 remain open.
 
 The items below live in or around `fifine_deck/backend/StreamDock/`, which
 is the vendored MiraboxSpace SDK — code we ship but did not write. Fixing them
@@ -23,7 +23,32 @@ means patching a third party's threading, so each one needs real replug-cycle
 and quit-timing testing against physical hardware before it can be trusted. That
 is why they were held back from 0.10.0 rather than rushed in on release day.
 
-### 1. A replug completing inside ~0.6 s wedges the deck permanently
+### 1. A replug completing inside ~0.6 s wedges the deck permanently — **FIXED (needs a hardware replug to confirm)**
+
+> Fixed after 0.10.2. Reconciliation no longer trusts the path string alone.
+> Each cached device is stamped at creation with the identity of its node —
+> `(st_dev, st_ino)` — and a device whose path is still present but whose node
+> identity has CHANGED is treated as gone, because devtmpfs destroys and
+> recreates `/dev/hidrawN` on a replug even though the name is reused.
+>
+> Serial number does not help here: this deck reports a real one
+> (`81D0DA784415`), but it is the same physical device, so it is identical
+> before and after. The inode is what distinguishes the two connections.
+>
+> A removal that actually removed something now also runs `_add_missing_devices`
+> immediately, because on a fast replug the "add" uevent can arrive while the
+> stale entry is still cached and be skipped by the `_device_exists` guard.
+>
+> If the node cannot be stat'd the check falls back to path-only, so an
+> unreadable node cannot cause a false eviction. Verified against the live deck:
+> identity stamps as `(7, 12769)` and reconciliation with the device present
+> removes nothing. Six tests in `tests/test_sdk_shutdown.py`.
+>
+> **Still needs confirming with a physical fast replug** — that is the one
+> condition no test here can create.
+
+The original problem, for reference:
+
 
 `DeviceManager.py:295-301`, `DeviceManager.py:174`, `controller.py:179`
 
