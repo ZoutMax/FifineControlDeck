@@ -32,8 +32,29 @@ dir — please keep it that way).
 
 ## Releasing
 `./release.sh <version> "what changed"` bumps the snap + deb version, tags, and
-pushes both remotes. The tag triggers the GitHub Release workflow (builds +
+pushes to GitHub. The tag triggers the GitHub Release workflow (builds +
 attaches the `.deb`s). Then promote the snap and `dput` the PPA.
+
+Write the `## [<version>]` CHANGELOG section **first** — `release.sh` refuses to
+run without it, and so does `tests/test_packaging.py`.
+
+Run every gate before tagging, not just `pytest`. CI runs four, and two v0.10.0
+attempts were published-blocked by changes that passed `pytest` alone:
+
+    ruff check fifine_deck --exclude fifine_deck/backend --select E9,F63,F7,F82
+    mypy fifine_deck                 # mypy.ini pins python_version = 3.10
+    python -m pytest
+    QT_QPA_PLATFORM=offscreen python .github/smoke_test.py
+
+CI installs only `PyQt6 Pillow psutil pyudev ruff pytest pytest-timeout mypy`,
+on Python 3.10-3.13. A test importing anything beyond that plus the stdlib
+passes locally and fails in CI.
+
+## Known issues
+Open defects carried forward from the pre-0.10.0 audits — mostly in the vendored
+SDK's threading — are written up in
+[`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md) with file:line pointers,
+reproduction notes and a verification-status caveat.
 
 ## Device reports
 Only the **Stream Dock 293V3** (`3142:0060`) is hardware-verified. Other models
