@@ -293,6 +293,12 @@ def _type_text(text: str) -> None:
     Return, which is what the multi-line editor produces.
     """
     if not KEY_TOOL:
+        # Say so, exactly as _send_hotkey does. Returning silently meant a
+        # "Type text" or "Type password" key on a machine with none of these
+        # installed did nothing at all, with no log line and nothing on screen —
+        # indistinguishable from the key simply not being bound.
+        log.warning("no keystroke tool (install xdotool / ydotool / wtype); "
+                    "nothing was typed")
         return
     data = text.encode()
     if KEY_TOOL == "xdotool":
@@ -383,7 +389,21 @@ def execute(action, context: ActionContext | None = None) -> None:
             from . import secret_store
             pw = p.get("password") or (
                 secret_store.get(p["secret_id"]) if p.get("secret_id") else "")
-            _type_text(pw or "")
+            if not pw:
+                # secret_store.get returns None both for "no keyring backend"
+                # and "keyring is locked", and the key used to type an empty
+                # string either way with nothing to show for it. The user sees a
+                # dead key and has no idea the secret was simply unavailable —
+                # so name the likely cause instead of typing nothing silently.
+                if p.get("secret_id"):
+                    log.warning(
+                        "password key: no secret available for %s — the login "
+                        "keyring is locked, empty, or has no backend installed. "
+                        "Nothing was typed.", p["secret_id"])
+                else:
+                    log.warning("password key has no password set; nothing was typed")
+                return
+            _type_text(pw)
         elif t == "media":
             _media(p.get("cmd", "play-pause"))
         elif t == "volume":

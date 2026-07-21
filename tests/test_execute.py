@@ -110,12 +110,40 @@ def test_password_resolves_secret_id(rec, monkeypatch):
     assert rec == [("_type_text", ("from-keyring",), {})]
 
 
-def test_password_missing_secret_types_nothing_rather_than_none(rec, monkeypatch):
-    """A failed keyring lookup must not type the string 'None'."""
+def test_password_missing_secret_types_nothing_rather_than_none(rec, monkeypatch, caplog):
+    """A failed keyring lookup must not type the string 'None' — and must not
+    silently type an empty string either. secret_store.get returns None both for
+    "no keyring backend" and "keyring is locked", so the key just looked dead and
+    the user had no way to tell the secret was merely unavailable."""
+    import logging
     from fifine_deck import secret_store
     monkeypatch.setattr(secret_store, "get", lambda sid: None)
-    actions.execute(Action("password", {"secret_id": "gone"}))
-    assert rec == [("_type_text", ("",), {})]
+    with caplog.at_level(logging.WARNING, logger="fifine_deck.actions"):
+        actions.execute(Action("password", {"secret_id": "gone"}))
+    assert rec == [], "typing was attempted with no password to type"
+    assert any("keyring" in r.message for r in caplog.records), (
+        "no explanation logged for a password key that did nothing")
+
+
+def test_password_with_no_secret_configured_also_explains_itself(rec, caplog):
+    """Same dead-key symptom, different cause: nothing was ever stored."""
+    import logging
+    with caplog.at_level(logging.WARNING, logger="fifine_deck.actions"):
+        actions.execute(Action("password", {}))
+    assert rec == []
+    assert any("no password set" in r.message for r in caplog.records)
+
+
+def test_typing_without_a_keystroke_tool_says_so(monkeypatch, caplog):
+    """0.10.2 audit: _type_text returned silently when no tool was installed,
+    while the parallel _send_hotkey path logged. A "Type text" key on a machine
+    without xdotool/ydotool/wtype did nothing at all, with no log line and
+    nothing on screen — indistinguishable from an unbound key."""
+    import logging
+    monkeypatch.setattr(actions, "KEY_TOOL", None)
+    with caplog.at_level(logging.WARNING, logger="fifine_deck.actions"):
+        actions._type_text("hello")
+    assert any("no keystroke tool" in r.message for r in caplog.records)
 
 
 # -- deck-side actions are delegated to the context --------------------------

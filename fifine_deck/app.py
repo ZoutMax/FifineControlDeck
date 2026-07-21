@@ -273,7 +273,11 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
                 # GUI applies it through its own toggle so the live config
                 # and the menu state stay in sync (changing the file behind
                 # a running GUI got clobbered by its next autosave).
-                win.autostart_act.setChecked(cmd == "autostart-on")
+                # apply_autostart, not setChecked: setChecked only fires the
+                # toggle when the value CHANGES, and that value is a snapshot
+                # from window construction — so a file removed behind the GUI's
+                # back left this a silent no-op while the CLI printed success.
+                win.apply_autostart(cmd == "autostart-on")
             else:
                 win.show_and_raise()
         conn.close()
@@ -390,8 +394,20 @@ def main() -> int:
         # the stale value straight back. Delegate to the running instance so
         # its toggle applies and persists the change.
         if _signal_existing("autostart-on" if enable else "autostart-off"):
-            print("Signalled the running instance to update autostart.")
-            return 0
+            # Confirm, don't assume. This used to print success the moment the
+            # bytes were written, so a delegation that changed nothing still
+            # exited 0. The entry file IS the state, so just watch it settle.
+            import time as _time
+            want = bool(enable)
+            for _ in range(20):                      # up to ~2 s
+                if os.path.exists(autostart_file()) == want:
+                    print("Autostart %s." % ("enabled" if want else "disabled"))
+                    return 0
+                _time.sleep(0.1)
+            print("Asked the running instance to update autostart, but the "
+                  "entry is still %s. Try again, or use the Options menu."
+                  % ("missing" if want else "present"), file=sys.stderr)
+            return 1
         return set_autostart(enable)
     if args.headless:
         return run_headless()

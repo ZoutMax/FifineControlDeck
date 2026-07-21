@@ -1319,3 +1319,97 @@ def test_deck_side_brightness_resyncs_the_slider_without_a_feedback_loop(win):
     QApplication.processEvents()
     assert seen == [], f"resync re-emitted valueChanged: {seen}"
     assert cfg.brightness == 55
+
+
+def test_export_warns_when_the_config_carries_a_cleartext_password(win, monkeypatch, tmp_path):
+    """0.10.2 audit: with no keyring available a password is stored in the
+    config in plain text, and to_dict copies params verbatim — so Export writes
+    the secret readable. 0600 protects other users of THIS machine, but an
+    export exists to be moved elsewhere, where the mode does not follow it."""
+    from fifine_deck.model import Action
+    w, cfg, c = win
+    kc = cfg.active_profile().pages[0].key(1)
+    kc.action = Action("password", {"password": "hunter2"})
+
+    out = tmp_path / "exported.json"
+    monkeypatch.setattr(mw.QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(out), "")))
+    _AutoBox.questions = []
+    _AutoBox.answer = QMessageBox.StandardButton.No     # user declines
+
+    w._export_config()
+
+    assert _AutoBox.questions, "exported a cleartext password with no warning"
+    assert "plain text" in _AutoBox.questions[0]
+    assert not out.exists(), "declining the warning still wrote the file"
+
+
+def test_export_without_a_password_asks_nothing(win, monkeypatch, tmp_path):
+    """The warning must be conditional, or every export nags."""
+    w, cfg, c = win
+    out = tmp_path / "exported.json"
+    monkeypatch.setattr(mw.QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(out), "")))
+    _AutoBox.questions = []
+
+    w._export_config()
+
+    assert _AutoBox.questions == []
+    assert out.exists()
+
+
+def test_cleartext_scan_reaches_folders_hold_actions_and_knobs(win):
+    """A secret anywhere lands in the same exported file, so the scan has to
+    cover every slot — not just top-level key actions."""
+    from fifine_deck.model import Action, Folder, KnobConfig
+    w, cfg, c = win
+    page = cfg.active_profile().pages[0]
+    assert not w._config_has_cleartext_password()
+
+    page.key(1).hold_action = Action("password", {"password": "x"})
+    assert w._config_has_cleartext_password(), "hold action missed"
+    page.key(1).hold_action = Action()
+
+    fld = Folder(name="F")
+    fld.pages[0].key(2).action = Action("password", {"password": "x"})
+    page.key(3).folder = fld
+    assert w._config_has_cleartext_password(), "folder missed"
+    page.key(3).folder = None
+
+    kn = KnobConfig()
+    kn.press = Action("password", {"password": "x"})
+    page.knobs[1] = kn
+    assert w._config_has_cleartext_password(), "knob missed"
+    page.knobs.clear()
+
+    page.key(4).action = Action("multi", {"steps": [
+        {"type": "password", "params": {"password": "x"}}]})
+    assert w._config_has_cleartext_password(), "multi-action step missed"
+
+
+def test_delegated_autostart_applies_even_when_the_menu_state_is_stale(win, tmp_path, monkeypatch):
+    """0.10.2 audit: the CLI delegated to the running GUI, which called
+    setChecked() — and that emits toggled, and therefore writes the file, only
+    when the value CHANGES. The value is a snapshot from window construction, so
+    if the entry was removed behind the GUI's back, --enable-autostart changed
+    nothing while the CLI printed success."""
+    from fifine_deck import app as fapp
+    w, cfg, c = win
+    entry = tmp_path / "autostart" / "fifine-control-deck.desktop"
+    monkeypatch.setattr(fapp, "autostart_file", lambda: str(entry))
+
+    # Make the menu believe autostart is on WITHOUT writing the file — that is
+    # the stale snapshot. A plain setChecked would fire toggled and create it,
+    # which is exactly the state we need to not have.
+    w.autostart_act.blockSignals(True)
+    w.autostart_act.setChecked(True)
+    w.autostart_act.blockSignals(False)
+    assert not entry.exists()               # GUI says on, disk says otherwise
+
+    assert w.apply_autostart(True) is True
+    assert entry.exists(), "the stale menu state swallowed the request"
+    assert w.autostart_act.isChecked() is True
+
+    assert w.apply_autostart(False) is True
+    assert not entry.exists()
+    assert w.autostart_act.isChecked() is False

@@ -124,7 +124,64 @@ class MainWindow(QMainWindow):
         from ..app import set_autostart
         set_autostart(on)
 
+    def apply_autostart(self, enable: bool) -> bool:
+        """Force the autostart entry to `enable` and resync the menu item.
+
+        setChecked() alone was not enough for the delegated CLI path: it emits
+        toggled — and therefore writes or removes the .desktop file — only when
+        the value CHANGES, and that value is a snapshot taken once at window
+        construction and never refreshed. So if the file had been removed behind
+        the running GUI's back, the action still read True, --enable-autostart
+        changed nothing, and the CLI printed success anyway.
+
+        Apply first, then make the menu reflect what is actually on disk.
+        Returns whether the file ended up in the requested state.
+        """
+        from ..app import autostart_file, set_autostart
+        set_autostart(enable)
+        on_disk = os.path.exists(autostart_file())
+        self.autostart_act.blockSignals(True)     # or this re-enters _set_autostart
+        try:
+            self.autostart_act.setChecked(on_disk)
+        finally:
+            self.autostart_act.blockSignals(False)
+        return on_disk == enable
+
     # -- config export / import -------------------------------------------
+    def _config_has_cleartext_password(self) -> bool:
+        """True if any action anywhere carries a literal password.
+
+        Walks profiles, pages, folders (recursively) and knobs, including hold
+        actions and multi-action steps, because a secret in any one of them ends
+        up in the exported file just the same.
+        """
+        def action_has(a) -> bool:
+            if a is None:
+                return False
+            if a.params.get("password"):
+                return True
+            for step in a.params.get("steps") or []:
+                # steps are stored as plain dicts of {"type": ..., "params": ...}
+                if isinstance(step, dict) and (step.get("params") or {}).get("password"):
+                    return True
+            return False
+
+        def scan_container(cont) -> bool:
+            for page in getattr(cont, "pages", []):
+                for kc in page.keys.values():
+                    if action_has(kc.action) or action_has(kc.hold_action):
+                        return True
+                    if kc.folder is not None and scan_container(kc.folder):
+                        return True
+                # knobs hang off the Page, not the Profile
+                for kn in page.knobs.values():
+                    if any(action_has(getattr(kn, slot, None))
+                           for slot in ("press", "left", "right")):
+                        return True
+            return False
+
+        return any(scan_container(prof) for prof in self.config.profiles)
+
     def _export_config(self):
         path, _ = QFileDialog.getSaveFileName(
             self, "Export configuration", os.path.expanduser("~/fifine-deck-config.json"),
@@ -133,6 +190,23 @@ class MainWindow(QMainWindow):
             return
         if not path.lower().endswith(".json"):
             path += ".json"
+        # A password key falls back to storing its secret in the config in
+        # cleartext when no keyring is available, and to_dict copies params
+        # verbatim — so the export carries it. 0600 protects other local users
+        # of THIS machine, but the whole point of an export is to move it
+        # somewhere else, where the mode does not follow it. Warn before
+        # writing, not after.
+        if self._config_has_cleartext_password():
+            if QMessageBox.question(
+                    self, "Export contains a password",
+                    "One or more keys store a password in this configuration "
+                    "in plain text, because no keyring was available when it "
+                    "was set.\n\nThe exported file will contain that password "
+                    "readable by anyone who opens it. It is written private to "
+                    "you, but copying it to another machine, a backup or cloud "
+                    "storage carries the password with it.\n\nExport anyway?") \
+                    != QMessageBox.StandardButton.Yes:
+                return
         try:
             # 0600 like DeckConfig.save: the config can hold a plaintext
             # password (the no-keyring fallback), and an export written with
