@@ -14,10 +14,11 @@ long-standing behaviours that predate both.
 
 ## Device layer and the vendored SDK
 
-**Status:** issues 1-6 are fixed and confirmed on hardware, 7 is partly fixed
-(repeat decodes eliminated; the first decode still blocks), 8 is 2 of 3 fixed,
-and 9's cause is confirmed and partly mitigated. What remains: moving the GIF
-decode off the Qt thread, and checking transport write results.
+**Status:** issues 1-6 and 8 are fixed and confirmed on hardware; 7 is partly
+fixed (repeat decodes eliminated, the first decode still blocks the Qt thread);
+9's cause is confirmed and mitigated as far as it can be without rebuilding a
+vendored binary. The single piece of real work left in this file is moving the
+GIF decode onto a worker thread.
 
 The items below live in or around `fifine_deck/backend/StreamDock/`, which
 is the vendored MiraboxSpace SDK — code we ship but did not write. Fixing them
@@ -267,7 +268,7 @@ that long. Because `_lock` is held throughout, the SDK reader thread also blocks
 so key presses landing during a page switch are dispatched late by the same
 amount.
 
-### 8. Lower severity, same area — **2 of 3 FIXED**
+### 8. Lower severity, same area — **FIXED**
 
 > After 0.10.2:
 > * **Double close — fixed.** `StreamDock.close()` is now serialised by a lock
@@ -279,7 +280,13 @@ amount.
 >   its batch under its own lock and writes after releasing it, so a frame could
 >   otherwise land after the clear and stay lit on the deck once the app was
 >   gone.
-> * **Unchecked write results — still open.** See below.
+> * **Unchecked write results — fixed.** `set_key_image_stream` returns `None`
+>   when the transport has no handle (it returns early and writes nothing) and a
+>   negative int on a C error; every caller discarded both. `render_key` now
+>   reports it through `_note_write_result`, which logs the first failure of a
+>   run and then counts rather than logging one line per key per render, and
+>   says so when writes start landing again. Verified on the healthy deck that a
+>   full 15-key render produces no false positives.
 
 The original text:
 

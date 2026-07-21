@@ -552,3 +552,63 @@ def test_a_working_device_clears_the_error():
     c.last_error = "stale"
     assert c._setup_device(MockDevice()) is True
     assert c.last_error == ""
+
+
+def test_a_swallowed_key_write_is_logged_once_not_per_key(caplog):
+    """0.10.2 audit, issue 8: set_key_image_stream returns None when the
+    transport has no handle — it returns early and writes NOTHING — and a
+    negative int on a C error. Every caller discarded that, which is what made
+    a dead handle invisible: the app kept painting into nothing while the status
+    bar said "connected". It must be logged, but not once per key per render."""
+    import logging
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+
+    c = DeckController(DeckConfig())
+    with caplog.at_level(logging.WARNING, logger="fifine_deck.controller"):
+        for i in range(1, 16):
+            c._note_write_result(None, i)          # every key swallowed
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, f"logged {len(warnings)} times for one dead handle"
+    assert c._write_failures == 15
+
+
+def test_recovery_is_reported_and_resets_the_counter(caplog):
+    import logging
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+
+    c = DeckController(DeckConfig())
+    c._note_write_result(None, 1)
+    c._note_write_result(None, 2)
+    with caplog.at_level(logging.INFO, logger="fifine_deck.controller"):
+        c._note_write_result(0, 3)                 # a good write
+    assert c._write_failures == 0
+    assert any("landing again" in r.message for r in caplog.records)
+
+
+def test_a_normal_write_logs_nothing(caplog):
+    """No noise on the happy path — this runs on every key of every render."""
+    import logging
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+
+    c = DeckController(DeckConfig())
+    with caplog.at_level(logging.INFO, logger="fifine_deck.controller"):
+        for i in range(1, 16):
+            c._note_write_result(0, i)
+    assert caplog.records == []
+    assert c._write_failures == 0
+
+
+def test_a_negative_result_counts_as_failure(caplog):
+    import logging
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+
+    c = DeckController(DeckConfig())
+    with caplog.at_level(logging.WARNING, logger="fifine_deck.controller"):
+        c._note_write_result(-1, 4)
+    assert c._write_failures == 1
+    assert any("accepted no data" in r.message for r in caplog.records)

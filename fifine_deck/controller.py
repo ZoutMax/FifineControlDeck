@@ -98,6 +98,8 @@ class DeckController:
         # unopenable (no udev rule) and a deck that is simply absent are very
         # different problems, and the status bar showed "○ no device" for both.
         self.last_error: str = ""
+        # Consecutive key writes the device did not accept; see _note_write_result.
+        self._write_failures: int = 0
 
         register()
 
@@ -429,10 +431,33 @@ class DeckController:
                     else:
                         img = rendering.render_key(
                             dev.KEY_PIXEL_WIDTH, kc.label, kc.icon, kc.bg_color, kc.text_color)
-                    dev.set_key_image_pil(index, img)
+                    self._note_write_result(dev.set_key_image_pil(index, img), index)
                 self._sync_gif_loop()
             except Exception as e:
                 log.error("render key %s failed: %s", index, e)
+
+    def _note_write_result(self, result, index: int) -> None:
+        """Notice a key write that did not land.
+
+        set_key_image_stream returns None when the transport has no handle —
+        it returns EARLY and writes nothing — and a negative int on a C-level
+        error. Both were discarded by every caller, which is what made a dead
+        handle invisible: the app carried on painting into nothing while the
+        status bar said "connected". Log it, once per run of failures, so the
+        log is useful without becoming a flood at one line per key per render.
+        """
+        failed = result is None or (isinstance(result, int) and result < 0)
+        if not failed:
+            if self._write_failures:
+                log.info("device writes are landing again (after %d failed)",
+                         self._write_failures)
+            self._write_failures = 0
+            return
+        self._write_failures += 1
+        if self._write_failures == 1:
+            log.warning("key %s: the device accepted no data (result=%r) — the "
+                        "handle is probably dead; further failures will be "
+                        "counted, not logged", index, result)
 
     def _sync_gif_loop(self) -> None:
         dev = self.device
