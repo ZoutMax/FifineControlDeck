@@ -207,7 +207,7 @@ class DeviceManager:
             found_devices = self.transport.enumerate_devices(vendor_id=vid, product_id=pid)
             for device_info in found_devices:
                 if not self._device_exists(device_info["path"]):
-                    print(f"[add] path: {device_info['path']}")
+                    print(f"[add] path: {device_info['path']}", flush=True)
                     added_device = self._add_device(class_type, device_info)
                     if added_device is not None:
                         added_devices.append(added_device)
@@ -243,11 +243,11 @@ class DeviceManager:
                 was = getattr(device, "_node_identity", None)
                 now = self._node_identity(path)
                 if was is not None and now is not None and was != now:
-                    print(f"[stale] {path} was recreated (node identity changed)")
+                    print(f"[stale] {path} was recreated (node identity changed)", flush=True)
                     devices_to_remove.append(device)
 
         for device in devices_to_remove:
-            print(f"[remove] path: {device.getPath()}")
+            print(f"[remove] path: {device.getPath()}", flush=True)
             self._remove_device_by_path(device.getPath())
 
         return devices_to_remove
@@ -351,12 +351,12 @@ class DeviceManager:
 
                 added_devices = new_devices - current_devices
                 for device_path in added_devices:
-                    print(f"[add] path: {device_path}")
+                    print(f"[add] path: {device_path}", flush=True)
                     self._handle_device_addition(device_path, products)
 
                 removed_devices = current_devices - new_devices
                 for device_path in removed_devices:
-                    print(f"[remove] path: {device_path}")
+                    print(f"[remove] path: {device_path}", flush=True)
                     self._remove_device_by_path(device_path)
 
                 current_devices = new_devices
