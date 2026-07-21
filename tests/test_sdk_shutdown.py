@@ -15,6 +15,7 @@ Two defects from the pre-0.10.0 device audit, both on the close path:
 
 These drive the real SDK classes with fake transports; no device is touched.
 """
+import os
 import threading
 import time
 
@@ -646,3 +647,97 @@ def test_controller_stop_stops_the_gif_worker_before_clearing():
     assert "gif_worker_stopped" in order, "the animation worker was never stopped"
     assert order.index("gif_worker_stopped") < order.index("cleared"), (
         f"worker stopped after the clear: {order}")
+
+
+# -- issue 7: decoding must not happen on the caller's thread ----------------
+
+class _FakeGifCtl:
+    def __init__(self, cached=False, decodes_ok=True):
+        self.cached = cached
+        self.decodes_ok = decodes_ok
+        self.warm_calls = 0
+
+    def is_key_gif_cached(self, path, key):
+        return self.cached
+
+    def warm_key_gif(self, path, key):
+        self.warm_calls += 1
+        if self.decodes_ok:
+            self.cached = True
+        return self.decodes_ok
+
+
+def _controller_with_gif_ctl(ctl):
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+    from tests.test_controller import MockDevice
+    c = DeckController(DeckConfig())
+    dev = MockDevice()
+    dev.gif_controller = ctl
+    c.device = dev
+    return c, dev
+
+
+def test_an_undecoded_gif_is_queued_instead_of_decoded_inline(tmp_path):
+    """0.10.2 audit, issue 7: decoding ran on the Qt thread while holding the
+    controller lock — ~244 ms for a 90-frame file, freezing the window and
+    stalling the SDK reader thread waiting on the same lock."""
+    ctl = _FakeGifCtl(cached=False)
+    c, dev = _controller_with_gif_ctl(ctl)
+    path = str(tmp_path / "a.gif")
+
+    ready = c._gif_decode_ready(dev, 3, path)
+
+    assert ready is False, "the caller was told to decode inline"
+    assert c._decode_queue.qsize() == 1, "the decode was not handed to the worker"
+
+
+def test_an_already_cached_gif_is_installed_inline(tmp_path):
+    """A cache hit costs nothing, so there is no reason to defer it."""
+    ctl = _FakeGifCtl(cached=True)
+    c, dev = _controller_with_gif_ctl(ctl)
+    assert c._gif_decode_ready(dev, 3, str(tmp_path / "a.gif")) is True
+    assert c._decode_queue.qsize() == 0
+
+
+def test_the_same_gif_is_not_queued_twice(tmp_path):
+    """render_key runs per key per render; without a pending set the queue
+    would grow without bound while one decode was in flight."""
+    ctl = _FakeGifCtl(cached=False)
+    c, dev = _controller_with_gif_ctl(ctl)
+    path = str(tmp_path / "a.gif")
+    for _ in range(10):
+        c._gif_decode_ready(dev, 3, path)
+    assert c._decode_queue.qsize() == 1
+
+
+def test_an_undecodable_gif_is_not_retried_forever(tmp_path):
+    """Without a failure memo, a file that never decodes would be re-queued on
+    every render for the life of the process."""
+    ctl = _FakeGifCtl(cached=False, decodes_ok=False)
+    c, dev = _controller_with_gif_ctl(ctl)
+    path = str(tmp_path / "bad.gif")
+
+    assert c._gif_decode_ready(dev, 3, path) is False   # queued once
+    index, p = c._decode_queue.get_nowait()
+    # run exactly what the worker would do for a failing decode
+    ok = dev.gif_controller.warm_key_gif(p, index)
+    key = (os.path.abspath(p), index)
+    with c._decode_lock:
+        c._decode_pending.discard(key)
+        if not ok:
+            c._decode_failed.add(key)
+
+    # now it must take the normal path (and hit the existing rc<0 handling)
+    assert c._gif_decode_ready(dev, 3, path) is True
+    assert c._decode_queue.qsize() == 0
+
+
+def test_a_device_without_the_helpers_behaves_as_before(tmp_path):
+    """An SDK build lacking is_key_gif_cached must not break rendering."""
+    class _Old:
+        pass
+
+    ctl = _Old()
+    c, dev = _controller_with_gif_ctl(ctl)
+    assert c._gif_decode_ready(dev, 3, str(tmp_path / "a.gif")) is True

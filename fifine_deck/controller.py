@@ -100,6 +100,12 @@ class DeckController:
         self.last_error: str = ""
         # Consecutive key writes the device did not accept; see _note_write_result.
         self._write_failures: int = 0
+        # Off-thread GIF decoding; see _gif_decode_ready / _decode_worker.
+        self._decode_queue: "queue.Queue" = queue.Queue()
+        self._decode_lock = threading.Lock()
+        self._decode_pending: set = set()
+        self._decode_failed: set = set()
+        self._decode_thread: Optional[threading.Thread] = None
 
         register()
 
@@ -115,6 +121,10 @@ class DeckController:
                 if self._setup_device(dev):
                     opened = True
                     break
+        if self._decode_thread is None or not self._decode_thread.is_alive():
+            self._decode_thread = threading.Thread(
+                target=self._decode_worker, daemon=True, name="gif-decode")
+            self._decode_thread.start()
         self._listen_thread = threading.Thread(target=self._listen, daemon=True)
         self._listen_thread.start()
         return opened
@@ -295,6 +305,7 @@ class DeckController:
         self._cancel_holds()
         self._monitor_stop.set()
         self._action_queue.put(None)   # unblock + end the action worker
+        self._decode_queue.put(None)   # and the gif decode worker
         dev = self.device
         # Drop the callback BEFORE taking the lock: a _key_callback already
         # running is blocked on self._lock, and dev.close() below joins the
@@ -404,6 +415,15 @@ class DeckController:
             is_gif = (not is_monitor
                       and kc.icon.lower().endswith(".gif") and os.path.exists(kc.icon))
             try:
+                if is_gif and not self._gif_decode_ready(dev, index, kc.icon):
+                    # Not decoded yet, and decoding costs ~244 ms for a
+                    # 90-frame file. This runs on the Qt thread holding
+                    # self._lock, so paying it here freezes the window AND
+                    # stalls the SDK reader thread waiting on the same lock.
+                    # Hand it to the decode worker and paint the static face
+                    # for now; the worker re-renders this key once the decode
+                    # is cached, and that second pass costs ~0 ms.
+                    is_gif = False
                 if is_gif:
                     # The backend returns -1 for a file that exists but can't
                     # be decoded (truncated download, mislabeled format). It
@@ -435,6 +455,66 @@ class DeckController:
                 self._sync_gif_loop()
             except Exception as e:
                 log.error("render key %s failed: %s", index, e)
+
+    # -- off-thread GIF decoding -------------------------------------------
+    def _gif_decode_ready(self, dev, index: int, path: str) -> bool:
+        """True if this GIF can be installed without paying for a decode here.
+
+        False means "not yet" — the decode has been queued for the worker, and
+        the caller should render the static face this time round. A file that
+        failed to decode returns True so the caller takes its normal path and
+        hits the existing rc < 0 handling, rather than being queued forever.
+        """
+        ctl = getattr(dev, "gif_controller", None)
+        if ctl is None or not hasattr(ctl, "is_key_gif_cached"):
+            return True                      # older SDK: behave as before
+        key = (os.path.abspath(path), index)
+        try:
+            if ctl.is_key_gif_cached(path, index):
+                return True
+        except Exception:
+            return True                      # never let the check break rendering
+        with self._decode_lock:
+            if key in self._decode_failed:
+                return True                  # let the normal error path report it
+            if key in self._decode_pending:
+                return False                 # already queued; don't pile up
+            self._decode_pending.add(key)
+        self._decode_queue.put((index, path))
+        return False
+
+    def _decode_worker(self) -> None:
+        """Decodes GIFs off the Qt thread, then asks for a re-render.
+
+        Deliberately takes no controller lock while decoding: warm_key_gif
+        touches only the decode cache, never the device.
+        """
+        while True:
+            item = self._decode_queue.get()
+            if item is None:                 # shutdown sentinel
+                return
+            index, path = item
+            key = (os.path.abspath(path), index)
+            ok = False
+            try:
+                dev = self.device
+                if dev is not None and self._running:
+                    ok = dev.gif_controller.warm_key_gif(path, index)
+            except Exception as e:
+                log.debug("background gif decode of %r failed: %s", path, e)
+            finally:
+                with self._decode_lock:
+                    self._decode_pending.discard(key)
+                    if not ok:
+                        # Remember the failure, or render_key would queue this
+                        # file again on every single render, forever.
+                        self._decode_failed.add(key)
+            if ok and self._running:
+                try:
+                    self.render_key(index)   # now a cache hit, ~0 ms
+                    self.refresh()
+                except Exception as e:
+                    log.debug("re-render after gif decode failed: %s", e)
 
     def _note_write_result(self, result, index: int) -> None:
         """Notice a key write that did not land.

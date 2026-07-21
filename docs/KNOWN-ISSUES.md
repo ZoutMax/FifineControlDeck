@@ -14,11 +14,12 @@ long-standing behaviours that predate both.
 
 ## Device layer and the vendored SDK
 
-**Status:** issues 1-6 and 8 are fixed and confirmed on hardware; 7 is partly
-fixed (repeat decodes eliminated, the first decode still blocks the Qt thread);
-9's cause is confirmed and mitigated as far as it can be without rebuilding a
-vendored binary. The single piece of real work left in this file is moving the
-GIF decode onto a worker thread.
+**Status:** issues 1-8 are fixed and confirmed on hardware. Issue 9's cause is
+confirmed and mitigated as far as it can be without rebuilding a vendored
+binary: the remaining 2.001 s is inside `transport_destroy` in the prebuilt
+`libtransport.so`, and the window no longer waits on screen for it.
+
+Nothing in the device layer is outstanding.
 
 The items below live in or around `fifine_deck/backend/StreamDock/`, which
 is the vendored MiraboxSpace SDK — code we ship but did not write. Fixing them
@@ -235,7 +236,7 @@ when `dev.firmware_version` is empty — the "libusb false-connect" state that
 `try_open` explicitly rejects. On that path the status bar reads `● connected fw=`
 with every key dead and no retry anywhere.
 
-### 7. GIF decoding runs on the Qt thread while holding the controller lock — **PARTLY FIXED**
+### 7. GIF decoding runs on the Qt thread while holding the controller lock — **FIXED**
 
 > After 0.10.2, `_read_gif` memoises its result, keyed on the file's path,
 > mtime and size plus the target format, bounded to 6 entries. Measured on a
@@ -246,11 +247,21 @@ with every key dead and no retry anywhere.
 > profile switch, folder enter/exit and reconnect used to re-decode the same
 > unchanged file in full.
 >
-> **The FIRST decode of each GIF still runs on the Qt thread inside the
-> controller lock**, so it remains a ~244 ms freeze once per unique file per
-> session, and a stall for the SDK reader thread waiting on that lock. Moving
-> the decode to a worker is the remaining work and is a real refactor, not a
-> patch. Seven tests in `tests/test_sdk_shutdown.py`.
+> The first decode is now off the Qt thread too. `render_key` asks whether the
+> decode is already cached; if not it queues the file for a dedicated worker
+> and paints the key's static face for this pass, and the worker re-renders it
+> once the decode lands. The worker holds no controller lock while decoding —
+> `warm_key_gif` touches only the decode cache, never the device.
+>
+> Measured on the deck with a cold 90-frame 400x400 file: **render_key returns
+> in 0.1 ms instead of ~244 ms**, and the key becomes animated a moment later.
+>
+> Guards, because this runs per key per render: a file already queued is not
+> queued again, and a file that fails to decode is remembered so it is not
+> retried forever — it falls through to the existing `rc < 0` handling instead.
+> A device whose SDK lacks the new helpers behaves exactly as before.
+>
+> Twelve tests in `tests/test_sdk_shutdown.py`.
 
 The original problem, for reference:
 

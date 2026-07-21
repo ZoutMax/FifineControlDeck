@@ -306,12 +306,7 @@ class GifController:
         Keyed on the file's identity AND mtime/size, so editing an icon in place
         still takes effect.
         """
-        try:
-            st = os.stat(path)
-            cache_key = (os.path.abspath(path), st.st_mtime_ns, st.st_size,
-                         bool(allow_png), repr(image_format))
-        except OSError:
-            cache_key = None            # unstattable -> just decode, no caching
+        cache_key = self._decode_cache_key(path, image_format, allow_png)
 
         if cache_key is not None:
             with self._decode_cache_lock:
@@ -332,6 +327,47 @@ class GifController:
                     self._decode_cache.pop(next(iter(self._decode_cache)))
         f, d, w, h = result
         return list(f), list(d), w, h
+
+    @staticmethod
+    def _decode_cache_key(path, image_format, allow_png):
+        """Cache identity for one decode, or None when the file cannot be
+        stat'd (in which case the result is used but not cached)."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return (os.path.abspath(path), st.st_mtime_ns, st.st_size,
+                bool(allow_png), repr(image_format))
+
+    def is_key_gif_cached(self, path, key) -> bool:
+        """True if set_key_gif(path, key) would be served from the cache.
+
+        LOCAL PATCH. Lets the caller decide whether a decode is about to cost
+        ~244 ms on its thread, and hand it to a worker instead.
+        """
+        logical_key, hardware_key = self._get_key_values(key)
+        if hardware_key is None:
+            return False
+        ck = self._decode_cache_key(
+            path, self._key_image_format(logical_key, hardware_key), True)
+        if ck is None:
+            return False
+        with self._decode_cache_lock:
+            return ck in self._decode_cache
+
+    def warm_key_gif(self, path, key) -> bool:
+        """Decode into the cache WITHOUT touching the device.
+
+        LOCAL PATCH. Safe to call from any thread: it takes only the decode
+        cache lock, never the playback lock and never the transport. Returns
+        whether the file decoded to anything.
+        """
+        logical_key, hardware_key = self._get_key_values(key)
+        if hardware_key is None:
+            return False
+        fmt = self._key_image_format(logical_key, hardware_key)
+        frames, _, _, _ = self._read_gif(path, fmt, allow_png=True)
+        return bool(frames)
 
     def _read_gif_uncached(self, path, image_format, allow_png):
         try:
