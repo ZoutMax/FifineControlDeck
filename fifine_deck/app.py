@@ -52,18 +52,32 @@ def _liveness_paths() -> set:
     return {_ipc_socket_path(), os.path.join(tempfile.gettempdir(), _IPC_NAME)}
 
 
+def _lock_path() -> str:
+    """The single-instance lock file, anchored on CONFIG_DIR.
+
+    Deliberately NOT under _runtime_dir(): that resolves to XDG_RUNTIME_DIR
+    for a desktop/systemd launch but falls back to /tmp for an env-stripped
+    one (bare ssh, cron, a detached shell). Two launches resolving it
+    differently would flock DIFFERENT files and both come up live, fighting
+    the device and clobbering config saves. CONFIG_DIR is derived from
+    XDG_CONFIG_HOME/HOME — stable across every launch context and user-owned —
+    so every launch contends the same lock."""
+    from .model import CONFIG_DIR
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    return os.path.join(CONFIG_DIR, _IPC_NAME + ".lock")
+
+
 def _acquire_instance_lock():
-    """Atomic single-instance claim, via flock on a lock file next to the
-    socket. The socket alone cannot be the claim: two racing launches can
-    both fail listen() on a stale socket, and the loser's removeServer()
-    then unlinks the WINNER's live socket — two instances end up running,
-    fighting over the device and clobbering each other's config saves
-    (0.8.1 audit). flock is atomic and evaporates with the process, so a
-    crash leaves nothing to mis-diagnose. Returns the held fd (keep it open
-    for the process lifetime), or None when another live instance holds it."""
+    """Atomic single-instance claim, via flock on a canonical lock file. The
+    socket alone cannot be the claim: two racing launches can both fail
+    listen() on a stale socket, and the loser's removeServer() then unlinks
+    the WINNER's live socket — two instances end up running, fighting over the
+    device and clobbering each other's config saves (0.8.1 audit). flock is
+    atomic and evaporates with the process, so a crash leaves nothing to
+    mis-diagnose. Returns the held fd (keep it open for the process
+    lifetime), or None when another live instance holds it."""
     import fcntl
-    fd = os.open(_ipc_socket_path() + ".lock",
-                 os.O_RDWR | os.O_CREAT, 0o600)
+    fd = os.open(_lock_path(), os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:

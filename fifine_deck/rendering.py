@@ -70,7 +70,11 @@ def render_key(
             x = (size - icon.width) // 2
             y = pad if label else (size - icon.height) // 2
             img.paste(icon, (x, y), icon)
-        except OSError:
+        except Exception:
+            # Broad on purpose: a bad icon must degrade to a bare-background
+            # key, never break the whole frame render. UnidentifiedImageError
+            # and truncated files raise OSError, but a valid-but-huge image
+            # trips Pillow's DecompressionBombError, which is NOT an OSError.
             pass
 
     if label:

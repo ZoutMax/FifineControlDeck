@@ -195,7 +195,7 @@ def test_close_app_prefers_wmctrl(ran, monkeypatch):
 def test_close_app_falls_back_to_pkill(ran, monkeypatch):
     monkeypatch.setattr(actions, "_has", lambda c: c == "pkill")
     actions._close_app("firefox")
-    assert ran == [["pkill", "-f", "firefox"]]
+    assert ran == [["pkill", "-x", "firefox"]]
 
 
 def test_close_app_without_any_tool_does_nothing(ran, monkeypatch):

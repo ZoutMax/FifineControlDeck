@@ -230,3 +230,27 @@ def test_key_with_only_hold_action_is_not_empty():
     from fifine_deck.model import Action, KeyConfig
     kc = KeyConfig(hold_action=Action("hotkey", {"keys": "a"}))
     assert not kc.is_empty()
+
+
+def test_load_reraises_io_error_instead_of_wiping_config(tmp_path, monkeypatch):
+    """Audit fix: a transient read failure (EIO on a flaky mount, EMFILE under
+    fd exhaustion) must NOT be misclassified as corruption. The good config
+    must be left in place and the error propagated, never moved to .corrupt
+    and replaced with a default."""
+    import builtins
+    import pytest
+    from fifine_deck.model import DeckConfig
+    p = tmp_path / "config.json"
+    p.write_text('{"version": 1, "brightness": 80, "profiles": []}')
+    real_open = builtins.open
+
+    def boom(path, *a, **k):
+        if str(path) == str(p):
+            raise OSError(5, "EIO")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(builtins, "open", boom)
+    with pytest.raises(OSError):
+        DeckConfig.load(str(p))
+    assert p.exists()                                   # good file untouched
+    assert not (tmp_path / "config.json.corrupt").exists()

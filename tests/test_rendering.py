@@ -194,3 +194,23 @@ def test_rgba_input_is_encodable():
     """render_key can hand back RGBA (icon compositing); JPEG has no alpha."""
     data = rendering.to_device_jpeg(_quadrants().convert("RGBA"), rotation=0)
     assert data[:2] == b"\xff\xd8"
+
+
+def test_render_key_survives_a_decompression_bomb(tmp_path, monkeypatch):
+    """Audit fix: a valid-but-oversized icon trips Pillow's
+    DecompressionBombError, which is NOT an OSError. render_key must degrade
+    to a bare-background key, never let that exception break the whole frame."""
+    from PIL import Image
+    from fifine_deck import rendering
+    icon = tmp_path / "huge.png"
+    icon.write_bytes(b"fake")
+    real_open = Image.open
+
+    def bomb(path, *a, **k):
+        if str(path) == str(icon):
+            raise Image.DecompressionBombError("too big")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(Image, "open", bomb)
+    img = rendering.render_key(96, label="X", icon_path=str(icon))
+    assert img.size == (96, 96)                          # rendered, did not raise

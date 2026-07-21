@@ -366,10 +366,17 @@ class DeckConfig:
             cfg = cls()
             cfg.save(path)
             return cfg
+        # Read and parse in SEPARATE guards. An OSError from the read (EIO on a
+        # flaky/removable/network mount, EMFILE under fd exhaustion, ENOMEM)
+        # means the file may be perfectly valid — treating that as corruption
+        # would move the good config aside and replace it with a fresh default,
+        # silently wiping the user's real configuration. So IO errors propagate;
+        # only a genuine decode/shape problem triggers the destructive recovery.
+        with open(path) as f:
+            raw = f.read()
         try:
-            with open(path) as f:
-                return cls.from_dict(json.load(f))
-        except (json.JSONDecodeError, OSError, AttributeError, ValueError,
+            return cls.from_dict(json.loads(raw))
+        except (json.JSONDecodeError, AttributeError, ValueError,
                 TypeError, KeyError):
             # Corrupt or structurally-invalid config (bad JSON *or* wrong shape):
             # preserve it and start fresh rather than crash on launch. NOT

@@ -313,7 +313,11 @@ def _close_app(target: str) -> None:
     if _has("wmctrl"):
         _run(["wmctrl", "-c", target], stderr=subprocess.DEVNULL)
     elif _has("pkill"):
-        _run(["pkill", "-f", target], stderr=subprocess.DEVNULL)
+        # Match the process NAME, not the full command line: `pkill -f
+        # <target>` substring-matches every process's argv, so a target like
+        # "fifine" or "python" would kill the deck app itself and unrelated
+        # processes. `-x` requires an exact comm match.
+        _run(["pkill", "-x", target], stderr=subprocess.DEVNULL)
     else:
         log.warning("close needs 'wmctrl' or 'pkill'")
 
@@ -412,12 +416,20 @@ def execute(action, context: ActionContext | None = None) -> None:
             elif mode == "down":
                 context.adjust_brightness(-abs(val))
         elif t == "multi":
+            from .model import Action as _A
             for step in p.get("steps", []):
-                from .model import Action as _A
+                # A single malformed step (non-dict, or a bad "delay" like
+                # "0.5s") must not abort the remaining steps: the outer guard
+                # would catch it once and drop the whole sequence silently.
+                if not isinstance(step, dict):
+                    continue
                 sub = _A.from_dict(step.get("action", step))
                 execute(sub, context)
-                delay = float(step.get("delay", 0) or 0)
-                if delay:
+                try:
+                    delay = float(step.get("delay", 0) or 0)
+                except (TypeError, ValueError):
+                    delay = 0.0
+                if delay > 0:
                     time.sleep(delay)
         else:
             log.warning("unhandled or context-less action: %s", t)

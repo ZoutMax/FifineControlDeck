@@ -162,8 +162,15 @@ class DeckController:
         reconnect) must not leave stale entries: the duplicate-down guard
         would silently swallow the key's next genuine press, and an armed
         timer would fire the hold action against a gone device."""
-        while self._holds:
-            _, pending = self._holds.popitem()
+        # popitem() atomically, rather than check-then-act: the reader thread
+        # pops entries on release and other callers may cancel concurrently,
+        # so a `while self._holds: popitem()` could race to an empty dict and
+        # raise KeyError. Catching it is the clean end-of-loop signal.
+        while True:
+            try:
+                _, pending = self._holds.popitem()
+            except KeyError:
+                break
             if pending.timer is not None:
                 pending.timer.cancel()
             with pending.lock:
@@ -190,7 +197,11 @@ class DeckController:
             self._cancel_holds()        # a replug starts with a clean slate
             with self._lock:
                 self.device = dev
-                self.page_index = 0
+                # Do NOT reset page_index here: a hotplug replug would then
+                # snap the user back to page 1 and, via on_page_changed, make
+                # the GUI clear its editor and drop an open picker's result.
+                # page_index defaults to 0 for the initial connect, and
+                # render_page/current_page clamp it, so preserving it is safe.
             dev.set_key_callback(self._key_callback)
             self.apply_brightness()
             self.render_page()
@@ -207,11 +218,20 @@ class DeckController:
         self._cancel_holds()
         self._monitor_stop.set()
         self._action_queue.put(None)   # unblock + end the action worker
+        dev = self.device
+        # Drop the callback BEFORE taking the lock: a _key_callback already
+        # running is blocked on self._lock, and dev.close() below joins the
+        # SDK reader thread. If close() ran while we held the lock, that
+        # in-flight callback could never acquire it, the join would time out,
+        # and the device would be left half-closed.
+        if dev:
+            try:
+                dev.set_key_callback(None)
+            except Exception:
+                pass
         with self._lock:
-            dev = self.device
             if dev:
                 try:
-                    dev.set_key_callback(None)
                     time.sleep(0.05)
                     # Stop animations first so the GIF loop can't repaint the
                     # keys we are about to clear.
@@ -219,10 +239,15 @@ class DeckController:
                     self._gif_keys.clear()
                     dev.clearAllIcon()
                     dev.refresh()
-                    dev.close()
                 except Exception:
                     pass
             self.device = None
+        # close() joins the reader thread — do it OUTSIDE the lock.
+        if dev:
+            try:
+                dev.close()
+            except Exception:
+                pass
 
     @property
     def connected(self) -> bool:
@@ -241,32 +266,39 @@ class DeckController:
         return not self._nav
 
     def page(self) -> Page:
-        pages = self.container().pages
-        self.page_index = max(0, min(self.page_index, len(pages) - 1))
-        return pages[self.page_index]
+        # RLock: navigation state (page_index/_container/_nav) is mutated by
+        # the action-worker thread and read here on the render path; serialize
+        # so a reader never sees a half-updated container/index pair.
+        with self._lock:
+            pages = self.container().pages
+            self.page_index = max(0, min(self.page_index, len(pages) - 1))
+            return pages[self.page_index]
 
     # -- folder navigation -------------------------------------------------
     def enter_folder(self, folder) -> None:
         if folder is None:
             return
-        self._nav.append((self._container, self.page_index))
-        self._container = folder
-        self.page_index = 0
+        with self._lock:
+            self._nav.append((self._container, self.page_index))
+            self._container = folder
+            self.page_index = 0
         self.render_page()
 
     def go_back(self) -> None:
-        if not self._nav:
-            return
-        container, page_index = self._nav.pop()
-        self._container = container
-        self.page_index = page_index
+        with self._lock:
+            if not self._nav:
+                return
+            container, page_index = self._nav.pop()
+            self._container = container
+            self.page_index = page_index
         self.render_page()
 
     def reset_nav(self) -> None:
         """Return to the root of the active profile (used on profile switch)."""
-        self._nav = []
-        self._container = None
-        self.page_index = 0
+        with self._lock:
+            self._nav = []
+            self._container = None
+            self.page_index = 0
 
     # -- rendering ---------------------------------------------------------
     def render_key(self, index: int) -> None:
@@ -632,21 +664,24 @@ class DeckController:
         # Clamp: a "Go to page #" key configured with 0 (or beyond the last
         # page) must not store a bogus index — with no device attached nothing
         # else re-clamps it and the page combo ends up with no selection.
-        n = len(self.container().pages)
-        self.page_index = max(0, min(index, n - 1))
+        with self._lock:
+            n = len(self.container().pages)
+            self.page_index = max(0, min(index, n - 1))
         self.render_page()
 
     def next_page(self) -> None:
         # container(), not profile(): inside a folder the visible pages are
         # the FOLDER's — counting the profile's pages made folder pages
         # unreachable (or wrapped wrongly) from the deck's page keys.
-        n = len(self.container().pages)
-        self.page_index = (self.page_index + 1) % n
+        with self._lock:
+            n = len(self.container().pages)
+            self.page_index = (self.page_index + 1) % n
         self.render_page()
 
     def prev_page(self) -> None:
-        n = len(self.container().pages)
-        self.page_index = (self.page_index - 1) % n
+        with self._lock:
+            n = len(self.container().pages)
+            self.page_index = (self.page_index - 1) % n
         self.render_page()
 
     def refresh(self) -> None:

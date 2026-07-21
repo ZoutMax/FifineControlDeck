@@ -30,7 +30,10 @@ def test_instance_lock_is_exclusive_and_releases(tmp_path, monkeypatch):
     fail listen() on a stale socket and the loser's removeServer() unlinked
     the winner's LIVE socket, ending with two running instances. The flock
     claim is atomic: exactly one holder, and a crash releases it for free."""
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    # The lock is anchored on CONFIG_DIR (canonical across every launch
+    # context), not the volatile runtime dir.
+    from fifine_deck import model
+    monkeypatch.setattr(model, "CONFIG_DIR", str(tmp_path))
     fd1 = app._acquire_instance_lock()
     assert fd1 is not None
     assert app._acquire_instance_lock() is None      # second claim loses
@@ -38,7 +41,7 @@ def test_instance_lock_is_exclusive_and_releases(tmp_path, monkeypatch):
     fd2 = app._acquire_instance_lock()
     assert fd2 is not None                           # claim recovers
     os.close(fd2)
-    mode = os.stat(app._ipc_socket_path() + ".lock").st_mode & 0o777
+    mode = os.stat(app._lock_path()).st_mode & 0o777
     assert mode == 0o600
 
 

@@ -807,8 +807,13 @@ class ActionEditor(QWidget):
 
     def _pick_library(self):
         dlg = IconLibraryDialog(self)
-        if dlg.exec() and dlg.chosen:
-            self.icon_edit.setText(dlg.chosen)
+        try:
+            if dlg.exec() and dlg.chosen:
+                self.icon_edit.setText(dlg.chosen)
+        finally:
+            # Parented to the long-lived editor, so without this the dialog
+            # (and its icon grid) leaks on every pick.
+            dlg.deleteLater()
 
     def _on_edit(self, *_):
         if self._building or self._kc is None:

@@ -218,3 +218,18 @@ def test_execute_never_raises_on_garbage_params():
                    Action("multi", {"steps": "not-a-list"}),
                    Action("totally_unknown_type", {})):
         actions.execute(action, ctx)                        # must not raise
+
+
+def test_multi_bad_step_does_not_abort_remaining_steps(rec, monkeypatch):
+    """Audit fix: a malformed step (a non-numeric 'delay', or a non-dict step)
+    must not silently drop the remaining steps of a multi-action."""
+    steps = [
+        {"action": {"type": "run_command", "params": {"command": "one"}}},
+        {"action": {"type": "run_command", "params": {"command": "two"}},
+         "delay": "0.5s"},                              # bad delay in the middle
+        "garbage-not-a-dict",                           # non-dict step
+        {"action": {"type": "run_command", "params": {"command": "three"}}},
+    ]
+    actions.execute(Action("multi", {"steps": steps}))
+    ran = [c[1][0] for c in rec if c[0] == "_popen_detached"]
+    assert ran == ["one", "two", "three"]
