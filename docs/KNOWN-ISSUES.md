@@ -14,8 +14,10 @@ long-standing behaviours that predate both.
 
 ## Device layer and the vendored SDK
 
-**Status:** issues 1-6 are fixed (1 awaits a physical replug to confirm) and 9's
-cause is confirmed and partly mitigated. Issues 7 and 8 remain open.
+**Status:** issues 1-6 are fixed and confirmed on hardware, 7 is partly fixed
+(repeat decodes eliminated; the first decode still blocks), 8 is 2 of 3 fixed,
+and 9's cause is confirmed and partly mitigated. What remains: moving the GIF
+decode off the Qt thread, and checking transport write results.
 
 The items below live in or around `fifine_deck/backend/StreamDock/`, which
 is the vendored MiraboxSpace SDK — code we ship but did not write. Fixing them
@@ -232,7 +234,25 @@ when `dev.firmware_version` is empty — the "libusb false-connect" state that
 `try_open` explicitly rejects. On that path the status bar reads `● connected fw=`
 with every key dead and no retry anywhere.
 
-### 7. GIF decoding runs on the Qt thread while holding the controller lock
+### 7. GIF decoding runs on the Qt thread while holding the controller lock — **PARTLY FIXED**
+
+> After 0.10.2, `_read_gif` memoises its result, keyed on the file's path,
+> mtime and size plus the target format, bounded to 6 entries. Measured on a
+> 90-frame 400x400 GIF: **244.1 ms cold, 0.0 ms cached**. Editing an icon in
+> place still invalidates correctly, and a failed decode is never cached.
+>
+> That removes the repeated cost, which is the common case — every page switch,
+> profile switch, folder enter/exit and reconnect used to re-decode the same
+> unchanged file in full.
+>
+> **The FIRST decode of each GIF still runs on the Qt thread inside the
+> controller lock**, so it remains a ~244 ms freeze once per unique file per
+> session, and a stall for the SDK reader thread waiting on that lock. Moving
+> the decode to a worker is the remaining work and is a real refactor, not a
+> patch. Seven tests in `tests/test_sdk_shutdown.py`.
+
+The original problem, for reference:
+
 
 `controller.py:325`, `controller.py:309`, `GifController.py:262-306`
 
@@ -247,7 +267,22 @@ that long. Because `_lock` is held throughout, the SDK reader thread also blocks
 so key presses landing during a page switch are dispatched late by the same
 amount.
 
-### 8. Lower severity, same area
+### 8. Lower severity, same area — **2 of 3 FIXED**
+
+> After 0.10.2:
+> * **Double close — fixed.** `StreamDock.close()` is now serialised by a lock
+>   and idempotent, so the concurrent `controller.stop()` / hotplug-remove race
+>   destroys the transport exactly once. Tested single-threaded and with six
+>   threads racing through a barrier.
+> * **Stale frame — fixed.** `controller.stop()` now stops the animation
+>   WORKER, not just the loop flag, before `clearAllIcon()`. The worker collects
+>   its batch under its own lock and writes after releasing it, so a frame could
+>   otherwise land after the clear and stay lit on the deck once the app was
+>   gone.
+> * **Unchecked write results — still open.** See below.
+
+The original text:
+
 
 - **Double close / double free.** Unplugging during quit lets `controller.stop()`
   and `_remove_device_by_path` call `close()` on the same object concurrently;

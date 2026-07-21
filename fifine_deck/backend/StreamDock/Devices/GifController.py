@@ -1,5 +1,6 @@
 import copy
 import io
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -34,6 +35,9 @@ class GifController:
 
     _BACKGROUND_INDEX = 0
     _DEFAULT_DELAY_MS = 100
+    # LOCAL PATCH: decoded-GIF cache size. Frame data is large and a page holds
+    # only a handful of animated keys, so a small cap is plenty.
+    _DECODE_CACHE_MAX = 6
 
     def __init__(self, device):
         self._device = device
@@ -42,6 +46,11 @@ class GifController:
         self._wake_event = threading.Event()
         self._running = True
         self._loop_enabled = False
+        # LOCAL PATCH: see _read_gif. Its own lock, deliberately not self._lock
+        # — the work loop holds that one while collecting frames, and decoding
+        # must never wait on playback.
+        self._decode_cache: dict = {}
+        self._decode_cache_lock = threading.Lock()
         self._thread = threading.Thread(target=self._gif_work_loop, daemon=True)
         self._thread.start()
 
@@ -278,6 +287,53 @@ class GifController:
         return self._device.key_image_format()
 
     def _read_gif(self, path, image_format, allow_png):
+        """Decode a GIF to per-frame device-native bytes, with a small cache.
+
+        LOCAL PATCH. This decodes AND re-encodes every frame, and it used to run
+        in full on every render — so each page switch, profile switch, folder
+        enter/exit and reconnect paid the whole cost again for the same
+        unchanged file. It runs on the Qt thread, inside the controller lock, so
+        that time is a frozen window AND a stall for the SDK reader thread
+        waiting on the same lock. Measured previously at ~0.25 s for a 90-frame
+        400x400 GIF, scaling with size and length and multiplying per animated
+        key on the page.
+
+        Frames are immutable bytes and nothing mutates the lists in place
+        (_release_status only touches video_capture), so entries are safe to
+        share between keys; the lists are copied out anyway so a caller cannot
+        disturb the cached originals.
+
+        Keyed on the file's identity AND mtime/size, so editing an icon in place
+        still takes effect.
+        """
+        try:
+            st = os.stat(path)
+            cache_key = (os.path.abspath(path), st.st_mtime_ns, st.st_size,
+                         bool(allow_png), repr(image_format))
+        except OSError:
+            cache_key = None            # unstattable -> just decode, no caching
+
+        if cache_key is not None:
+            with self._decode_cache_lock:
+                hit = self._decode_cache.get(cache_key)
+            if hit is not None:
+                frames, delays, width, height = hit
+                return list(frames), list(delays), width, height
+
+        result = self._read_gif_uncached(path, image_format, allow_png)
+
+        frames = result[0]
+        if cache_key is not None and frames:
+            with self._decode_cache_lock:
+                self._decode_cache[cache_key] = result
+                # Bounded: a deck page holds at most a handful of animated keys,
+                # and frame data is large. Drop the oldest beyond the cap.
+                while len(self._decode_cache) > self._DECODE_CACHE_MAX:
+                    self._decode_cache.pop(next(iter(self._decode_cache)))
+        f, d, w, h = result
+        return list(f), list(d), w, h
+
+    def _read_gif_uncached(self, path, image_format, allow_png):
         try:
             image = Image.open(path)
         except Exception as e:

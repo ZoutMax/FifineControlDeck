@@ -309,8 +309,19 @@ class DeckController:
                 try:
                     time.sleep(0.05)
                     # Stop animations first so the GIF loop can't repaint the
-                    # keys we are about to clear.
+                    # keys we are about to clear. Clearing the loop FLAG is not
+                    # enough: the worker collects its frame batch under its own
+                    # lock and writes AFTER releasing it, so one more frame
+                    # could land after clearAllIcon() and stay lit on the
+                    # physical deck once the app was gone. Stop the worker
+                    # itself and wait for it.
                     dev.stop_gif_loop()
+                    try:
+                        if not dev.gif_controller.close():
+                            log.debug("gif worker still running at clear time; "
+                                      "a stale frame may survive")
+                    except Exception:
+                        log.debug("stopping the gif worker failed", exc_info=True)
                     self._gif_keys.clear()
                     dev.clearAllIcon()
                     dev.refresh()

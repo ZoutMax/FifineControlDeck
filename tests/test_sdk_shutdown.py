@@ -89,6 +89,8 @@ def _bare_dock(transport):
     dock.heartbeat_thread = None
     dock.run_heartbeat_thread = False
     dock._heartbeat_stop = threading.Event()
+    dock._close_lock = threading.Lock()
+    dock._close_done = False
     dock.gif_controller = _CleanGif()       # tests override where it matters
     return dock
 
@@ -447,3 +449,197 @@ def test_a_removal_that_removed_nothing_does_not_re_add():
     mgr._add_missing_devices = lambda products: calls.append("add")
     mgr._handle_device_event("remove", None, [])
     assert calls == []
+
+
+# -- GIF decode cost ---------------------------------------------------------
+
+def _gif_controller_for_decode():
+    """A GifController with only what _read_gif touches — no thread, no device."""
+    from PIL import Image  # noqa: F401  (ensures Pillow is present)
+    ctl = object.__new__(gc_mod.GifController)
+
+    class _Dev:
+        def touchscreen_image_format(self):
+            return {"size": (800, 480)}
+
+    ctl._device = _Dev()
+    ctl._decode_cache = {}
+    ctl._decode_cache_lock = threading.Lock()
+    return ctl
+
+
+def _make_gif(path, n_frames, size=(64, 64)):
+    from PIL import Image
+    frames = [Image.new("RGB", size, (i * 3 % 256, 40, 90)) for i in range(n_frames)]
+    frames[0].save(str(path), save_all=True, append_images=frames[1:],
+                   duration=40, loop=0)
+    return str(path)
+
+
+FMT = {"size": (112, 112), "format": "JPEG", "rotation": 0, "flip": (False, False)}
+
+
+def test_decoding_the_same_gif_twice_does_not_decode_twice(tmp_path):
+    """0.10.2 audit, issue 7: set_key_gif decoded AND re-encoded every frame on
+    every render, with no caching — so each page switch, profile switch, folder
+    enter/exit and reconnect paid the whole cost again for an unchanged file.
+    It runs on the Qt thread inside the controller lock, so that is a frozen
+    window and a stall for the SDK reader thread waiting on the same lock."""
+    ctl = _gif_controller_for_decode()
+    path = _make_gif(tmp_path / "a.gif", 12)
+
+    calls = []
+    real = ctl._read_gif_uncached
+    ctl._read_gif_uncached = lambda p, f, a: (calls.append(p), real(p, f, a))[1]
+
+    first = ctl._read_gif(path, FMT, True)
+    second = ctl._read_gif(path, FMT, True)
+
+    assert len(calls) == 1, f"decoded {len(calls)} times for one unchanged file"
+    assert first[0] == second[0], "cached frames differ from the decoded ones"
+    assert len(first[0]) == 12
+
+
+def test_the_cache_hands_out_its_own_lists(tmp_path):
+    """Callers must not be able to disturb the cached originals."""
+    ctl = _gif_controller_for_decode()
+    path = _make_gif(tmp_path / "a.gif", 5)
+    a = ctl._read_gif(path, FMT, True)
+    b = ctl._read_gif(path, FMT, True)
+    assert a[0] is not b[0], "same list object handed to two callers"
+    a[0].append(b"junk")
+    assert len(ctl._read_gif(path, FMT, True)[0]) == 5, "cache was corrupted"
+
+
+def test_editing_the_file_invalidates_the_cache(tmp_path):
+    """Keyed on mtime and size, so replacing an icon in place still takes
+    effect — a cache that ignored this would pin the old animation forever."""
+    ctl = _gif_controller_for_decode()
+    p = tmp_path / "a.gif"
+    _make_gif(p, 12)
+    assert len(ctl._read_gif(str(p), FMT, True)[0]) == 12
+    time.sleep(0.01)
+    _make_gif(p, 4)                       # same path, different content
+    assert len(ctl._read_gif(str(p), FMT, True)[0]) == 4
+
+
+def test_a_different_target_format_is_cached_separately(tmp_path):
+    """The same file rendered for a different key geometry is different bytes."""
+    ctl = _gif_controller_for_decode()
+    path = _make_gif(tmp_path / "a.gif", 4)
+    ctl._read_gif(path, FMT, True)
+    other = dict(FMT, size=(96, 96))
+    ctl._read_gif(path, other, True)
+    assert len(ctl._decode_cache) == 2
+
+
+def test_the_cache_is_bounded(tmp_path):
+    """Frame data is large; the cache must not grow without limit."""
+    ctl = _gif_controller_for_decode()
+    path = _make_gif(tmp_path / "a.gif", 3)
+    for i in range(gc_mod.GifController._DECODE_CACHE_MAX + 6):
+        ctl._read_gif(path, dict(FMT, size=(112, 100 + i)), True)
+    assert len(ctl._decode_cache) <= gc_mod.GifController._DECODE_CACHE_MAX
+
+
+def test_an_undecodable_file_is_not_cached_as_a_success(tmp_path):
+    """A truncated or mislabelled file must keep returning empty, not get a
+    permanent empty entry that hides a later fixed file."""
+    ctl = _gif_controller_for_decode()
+    bad = tmp_path / "bad.gif"
+    bad.write_bytes(b"not a gif at all")
+    assert ctl._read_gif(str(bad), FMT, True)[0] == []
+    assert ctl._decode_cache == {}, "a failed decode was cached"
+
+
+# -- issue 8: double close, stale frame --------------------------------------
+
+def test_close_is_idempotent_and_destroys_the_transport_once():
+    """0.10.2 audit, issue 8: unplugging during quit lets DeckController.stop()
+    and DeviceManager._remove_device_by_path call close() on the SAME object
+    concurrently, and neither StreamDock.close nor LibUSBHIDAPI.close took a
+    lock — so both could read a non-None handle and both call transport_destroy
+    on it."""
+    class _CountingTransport(_FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.destroy_calls = 0
+
+        def close(self):
+            self.destroy_calls += 1
+            super().close()
+
+    tr = _CountingTransport()
+    dock = _bare_dock(tr)
+    dock.close(notify=False)
+    dock.close(notify=False)
+    dock.close(notify=False)
+    assert tr.destroy_calls == 1, (
+        f"transport destroyed {tr.destroy_calls} times — that is a double free")
+
+
+def test_concurrent_closes_destroy_the_transport_once():
+    """The same thing under the real race, from several threads at once."""
+    class _CountingTransport(_FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.destroy_calls = 0
+
+        def close(self):
+            self.destroy_calls += 1
+            super().close()
+
+    tr = _CountingTransport()
+    dock = _bare_dock(tr)
+    barrier = threading.Barrier(6)
+
+    def closer():
+        barrier.wait()
+        dock.close(notify=False)
+
+    threads = [threading.Thread(target=closer) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert tr.destroy_calls == 1, (
+        f"transport destroyed {tr.destroy_calls} times under concurrent close")
+
+
+def test_controller_stop_stops_the_gif_worker_before_clearing():
+    """A frame collected before the clear but written after it stays lit on the
+    physical deck once the app is gone. Clearing the loop flag is not enough —
+    the worker writes outside its lock."""
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+    from tests.test_controller import MockDevice
+
+    order = []
+
+    class _Dev(MockDevice):
+        class _Gif:
+            def close(self, timeout=2.0):
+                order.append("gif_worker_stopped")
+                return True
+
+        def __init__(self):
+            super().__init__()
+            self.gif_controller = _Dev._Gif()
+
+        def stop_gif_loop(self):
+            order.append("loop_flag_cleared")
+
+        def clearAllIcon(self):
+            order.append("cleared")
+
+        def close(self, *a, **k):
+            order.append("closed")
+
+    c = DeckController(DeckConfig())
+    c.device = _Dev()
+    c.stop()
+
+    assert "gif_worker_stopped" in order, "the animation worker was never stopped"
+    assert order.index("gif_worker_stopped") < order.index("cleared"), (
+        f"worker stopped after the clear: {order}")

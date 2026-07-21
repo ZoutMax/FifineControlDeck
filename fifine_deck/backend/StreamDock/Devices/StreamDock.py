@@ -93,6 +93,10 @@ class StreamDock(ABC):
         # udev listener blocked on every unplug. Waiting on an Event instead lets
         # close() wake the worker immediately.
         self._heartbeat_stop = threading.Event()
+        # LOCAL PATCH: close() is reachable concurrently from the owner's stop()
+        # and from the hotplug remove path; see close().
+        self._close_lock = threading.Lock()
+        self._close_done = False
         self._notify_on_close = True
         self.support_single_led_color = False
 
@@ -226,6 +230,17 @@ class StreamDock(ABC):
 
         if not notify:
             self._notify_on_close = False
+
+        # LOCAL PATCH: serialise and make idempotent. Unplugging during quit
+        # lets DeckController.stop() and DeviceManager._remove_device_by_path
+        # call close() on the SAME object concurrently, and nothing here or in
+        # LibUSBHIDAPI.close() took a lock — so both could read a non-None
+        # handle and both call transport_destroy on it. A second close is now a
+        # no-op rather than a double free.
+        with self._close_lock:
+            if self._close_done:
+                return
+            self._close_done = True
 
         # The GIF worker writes to the transport outside every lock, so whether
         # it actually stopped decides whether the transport may be destroyed
