@@ -1,8 +1,8 @@
 # Known issues
 
 Open defects carried forward from the pre-0.10.0 audits. Everything here was
-found by reading the code and, where noted, reproducing the behaviour. None of
-it is fixed yet.
+found by reading the code and, where noted, reproducing the behaviour. Entries
+marked **FIXED** carry a note saying how; the rest are open.
 
 Line numbers are **as of v0.10.0** (commit `aacf2eb`) and have shifted in files
 touched since. Treat them as a pointer, not an address.
@@ -14,7 +14,8 @@ long-standing behaviours that predate both.
 
 ## Device layer and the vendored SDK
 
-**Status:** issues 2 and 3 are fixed and verified on hardware. The rest are open.
+**Status:** issues 2, 3, 4, 5 and 6 are fixed and verified on hardware, and 9's
+cause is confirmed and partly mitigated. Issues 1, 7 and 8 remain open.
 
 The items below live in or around `fifine_deck/backend/StreamDock/`, which
 is the vendored MiraboxSpace SDK — code we ship but did not write. Fixing them
@@ -118,7 +119,17 @@ Narrower race: if the heartbeat passes its `if not self._handle` check just as
 The fix is small and self-contained — replace the sleep with an interruptible
 `threading.Event.wait()` — which makes this the best value-for-risk item here.
 
-### 4. The throttled rescan is idle-gated, not time-gated
+### 4. The throttled rescan is idle-gated, not time-gated — **FIXED**
+
+> Fixed after 0.10.2. The rescan now runs on a monotonic wall-clock schedule
+> (`last_rescan` + 60 s) regardless of why `poll()` returned, so unrelated USB
+> traffic can no longer starve it. The unguarded `pyudev.Context()` /
+> `Monitor.from_netlink()` are wrapped too, falling back to polling instead of
+> killing the listener thread for the rest of the session.
+> Covered by `tests/test_sdk_shutdown.py`.
+
+The original problem, for reference:
+
 
 `DeviceManager.py:225-229`, `DeviceManager.py:303-307`, `DeviceManager.py:208-210`,
 `controller.py:141-149`
@@ -143,7 +154,22 @@ confined session) propagates into `DeckController._listen`, which logs once and
 lets the thread die. `_fallback_polling` only covers `ImportError`, so hotplug is
 dead for the rest of the session with no retry.
 
-### 5. Fixing udev permissions while the app runs never reconnects
+### 5. Fixing udev permissions while the app runs never reconnects — **FIXED**
+
+> Fixed after 0.10.2. A udev `change` uevent — exactly what `udevadm trigger`
+> emits — is now delivered to a new `on_device_changed` callback instead of
+> being dropped, and the controller answers it with `try_open()`, which already
+> knew how to drop a non-functional handle and reopen. It early-returns when a
+> working handle is already held, so reacting to every change event costs
+> nothing; verified by firing real `change` events across the whole usb and
+> hidraw subsystems with the deck connected, which produced no churn.
+>
+> Note the eviction-by-firmware approach was considered and rejected: the
+> manager never opens devices itself (`auto_open=False`), so every cached entry
+> has empty firmware and evicting on that basis would drop working devices.
+
+The original problem, for reference:
+
 
 `DeviceManager.py:43-55`, `DeviceManager.py:174`, `DeviceManager.py:292-293`,
 `controller.py:187-195`, `main_window.py:816`, `actions.py:456-457`

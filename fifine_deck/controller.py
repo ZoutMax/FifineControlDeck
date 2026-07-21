@@ -152,10 +152,35 @@ class DeckController:
             self.manager.listen(
                 on_device_added=self._on_added,
                 on_device_removed=self._on_removed,
+                on_device_changed=self._on_changed,
                 auto_open=False,
             )
         except Exception as e:
             log.error("hotplug listener stopped: %s", e)
+
+    def _on_changed(self, _dev=None):
+        """A udev 'change' uevent arrived.
+
+        This is what `udevadm trigger` emits — the command the README and the
+        snap hint tell users to run right after installing the udev rule. It is
+        NOT an 'add', so the hotplug path ignored it, and a device that had
+        already failed to open stayed cached forever: the manager skips any path
+        it already holds, so the documented fix could never take effect without
+        restarting the app or physically replugging.
+
+        try_open is exactly the recovery for this — it drops a non-functional
+        handle and reopens — and it is a no-op when we already have a working
+        one, so reacting to every change event is cheap.
+        """
+        if not self._running:
+            return
+        if self.device is not None and self.device.firmware_version:
+            return                       # already working; nothing to recover
+        try:
+            if self.try_open():
+                log.info("recovered device access after a udev change event")
+        except Exception as e:
+            log.debug("try_open after a change event failed: %s", e)
 
     def _on_added(self, dev):
         if not (self._running and isinstance(dev, FifineDeck)):

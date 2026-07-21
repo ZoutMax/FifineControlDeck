@@ -37,6 +37,7 @@ class DeviceManager:
         self._device_lock = threading.RLock()
         self._on_device_added = None
         self._on_device_removed = None
+        self._on_device_changed = None      # LOCAL PATCH: see listen()
         self._auto_open = True
         self._auto_init = False
 
@@ -77,6 +78,7 @@ class DeviceManager:
         on_device_removed: Optional[Callable] = None,
         auto_open: bool = True,
         auto_init: bool = False,
+        on_device_changed: Optional[Callable] = None,
     ):
         """
         Listen for device hotplug events, cross-platform.
@@ -89,6 +91,13 @@ class DeviceManager:
         """
         if on_device_added is not None or on_device_removed is not None:
             self.set_device_change_callback(on_device_added, on_device_removed)
+        # LOCAL PATCH: fired on a udev "change" uevent, which is what
+        # `udevadm trigger` emits — the command our own docs tell users to run
+        # after installing the udev rule. The manager cannot fix that case
+        # itself (a device that failed to open stays cached, and the add path
+        # skips any path already cached), so it hands the event to the owner,
+        # which can drop its dead handle and reopen. See _handle_device_event.
+        self._on_device_changed = on_device_changed
         self._auto_open = auto_open
         self._auto_init = auto_init
 
@@ -205,9 +214,31 @@ class DeviceManager:
         if not PYUDEV_SUPPORT:
             self._fallback_polling(products)
             return
-        context = pyudev.Context()
-        monitor = pyudev.Monitor.from_netlink(context)
-        monitor.filter_by(subsystem="usb")
+        try:
+            context = pyudev.Context()
+            monitor = pyudev.Monitor.from_netlink(context)
+            monitor.filter_by(subsystem="usb")
+        except Exception as e:
+            # LOCAL PATCH: these three sat outside every try, so a failure here
+            # (no netlink access in a container or a confined session) escaped
+            # into the caller, which logs once and lets the listener thread die
+            # — hotplug then stayed dead for the whole session with no retry.
+            # _fallback_polling was only reachable for ImportError before.
+            print(f"[WARNING] pyudev unavailable ({e}); falling back to polling",
+                  flush=True)
+            self._fallback_polling(products)
+            return
+
+        # LOCAL PATCH: the safety-net rescan below is TIME-gated, not
+        # idle-gated. It used to run only on the poll() timeout branch, i.e.
+        # only after 60 consecutive seconds with zero USB uevents of ANY kind —
+        # and the filter is subsystem-wide, so a webcam, a dock or a phone
+        # re-enumerating keeps resetting that window. On a busy machine it could
+        # go hours without running. That matters because the add path gives up
+        # after ~3 s (10 retries at 0.2 s), and this rescan is what used to
+        # catch a deck whose hidraw node was not ready inside it.
+        RESCAN_INTERVAL = 60.0
+        last_rescan = time.monotonic()
 
         while True:
             try:
@@ -222,12 +253,16 @@ class DeviceManager:
                 # the instant one arrives, so hotplug stays immediate. Only the
                 # redundant rescan is throttled, from once a second to once a
                 # minute. See docs/PROVENANCE.md.
-                device = monitor.poll(timeout=60)
-                if device is None:
+                device = monitor.poll(timeout=RESCAN_INTERVAL)
+                if device is not None:
+                    self._handle_device_event(device.action, device, products)
+                # Rescan on a wall-clock schedule, whether poll() timed out or
+                # returned an event we ignored. See the RESCAN_INTERVAL note.
+                now = time.monotonic()
+                if now - last_rescan >= RESCAN_INTERVAL:
+                    last_rescan = now
                     self._remove_missing_devices(products)
                     self._add_missing_devices(products)
-                    continue
-                self._handle_device_event(device.action, device, products)
             except Exception as e:
                 print(f"Linux device listener error: {e}", flush=True)
 
@@ -289,6 +324,21 @@ class DeviceManager:
 
     def _handle_device_event(self, action, device, products):
         """Handle device events (Linux)"""
+        # LOCAL PATCH: "change" used to be dropped here, which is exactly the
+        # action `udevadm trigger` emits — the command the README and our own
+        # snap hint tell the user to run after installing the udev rule. So the
+        # documented fix for "no device access" could never take effect in a
+        # running app: the failed device stays cached in streamdocks, the add
+        # path skips any path already there, and the only other reconnect route
+        # (try_open) is reachable solely from the snap hint, which returns None
+        # outside a snap. A .deb or source user had no in-app recovery at all.
+        #
+        # Treat it as a reconciliation trigger: drop anything that is no longer
+        # usable, then re-add. Cheap, and only on a real uevent.
+        if action == "change":
+            self._safe_callback(self._on_device_changed, device, "device changed")
+            return
+
         if action not in ["add", "remove"]:
             return
 

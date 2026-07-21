@@ -246,3 +246,95 @@ def test_the_initial_settling_delay_is_interruptible_too():
     assert not t.is_alive()
     assert elapsed < 0.5, f"settling delay was not interruptible ({elapsed:.2f}s)"
     assert tr.heartbeats == 0, "a heartbeat was sent after the stop was requested"
+
+
+# -- hotplug reconciliation --------------------------------------------------
+
+def _device_manager_module():
+    """The SDK is imported as a top-level `StreamDock` package, and it is
+    fifine_deck.controller that puts it on sys.path — importing the vendored
+    path directly raises ModuleNotFoundError and silently skipped these tests."""
+    pytest.importorskip("fifine_deck.controller")
+    return pytest.importorskip("StreamDock.DeviceManager")
+
+
+def test_a_change_uevent_is_handed_to_the_owner():
+    """0.10.2 audit: `udevadm trigger` — the command our own docs tell users to
+    run after installing the udev rule — emits "change", which the handler
+    dropped. A device that had failed to open stayed cached forever (the add
+    path skips any path already held), so the documented fix could not take
+    effect without restarting or physically replugging."""
+    dm = _device_manager_module()
+    mgr = object.__new__(dm.DeviceManager)
+    seen = []
+    mgr._on_device_changed = lambda d: seen.append(d)
+    mgr._on_device_added = None
+    mgr._on_device_removed = None
+
+    mgr._handle_device_event("change", "the-device", [])
+
+    assert seen == ["the-device"], "a change uevent was dropped on the floor"
+
+
+def test_an_unknown_action_is_still_ignored():
+    """The change branch must not turn into a catch-all."""
+    dm = _device_manager_module()
+    mgr = object.__new__(dm.DeviceManager)
+    seen = []
+    mgr._on_device_changed = lambda d: seen.append(d)
+    mgr._handle_device_event("bind", "d", [])
+    mgr._handle_device_event("unbind", "d", [])
+    assert seen == []
+
+
+def test_controller_reopens_on_change_only_when_it_needs_to():
+    """try_open is the documented recovery, and is a no-op when a working
+    handle is already held — so reacting to every change event is cheap."""
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+    from tests.test_controller import MockDevice
+
+    c = DeckController(DeckConfig())
+    c._running = True
+    calls = []
+    c.try_open = lambda: (calls.append(1), True)[1]
+
+    c.device = None                       # nothing open -> must attempt
+    c._on_changed()
+    assert len(calls) == 1
+
+    c.device = MockDevice()               # working handle -> must not churn
+    c._on_changed()
+    assert len(calls) == 1, "reopened a device that was already working"
+
+    dead = MockDevice()
+    dead.firmware_version = ""            # false-connect -> must attempt
+    c.device = dead
+    c._on_changed()
+    assert len(calls) == 2
+
+
+def test_the_rescan_is_time_gated_not_idle_gated():
+    """0.10.2 audit: the safety-net rescan ran only on the poll() timeout
+    branch, i.e. only after 60 consecutive seconds with zero USB uevents of any
+    kind. The filter is subsystem-wide, so a webcam or dock re-enumerating kept
+    resetting that window and the rescan could go hours without running."""
+    import inspect
+    dm = _device_manager_module()
+    src = inspect.getsource(dm.DeviceManager._listen_linux)
+    assert "last_rescan" in src, "no wall-clock rescan schedule"
+    assert "time.monotonic()" in src, "rescan schedule is not monotonic"
+    # the rescan must NOT be inside an `if device is None` branch any more
+    assert "if device is None:\n                    self._remove_missing_devices" not in src
+
+
+def test_pyudev_setup_failure_falls_back_instead_of_killing_the_thread():
+    """Context()/from_netlink() sat outside every try, so a failure there (no
+    netlink in a container or confined session) killed the listener thread and
+    left hotplug dead for the session with no retry."""
+    import inspect
+    dm = _device_manager_module()
+    src = inspect.getsource(dm.DeviceManager._listen_linux)
+    head = src[:src.index("while True")]
+    assert "try:" in head and "_fallback_polling" in head, (
+        "pyudev setup is still unguarded")
