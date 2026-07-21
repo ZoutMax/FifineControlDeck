@@ -183,9 +183,10 @@ class Sampler:
         # priming must be per thread too — a flag primed on one thread would
         # let another thread's first (garbage) reading through as real.
         self._cpu_primed_threads: set[int] = set()
-        # (stream key, error text) already logged — see sample(). Bounded by the
-        # number of configured monitor keys times their distinct failure modes.
-        self._logged_failures: set[tuple[str, str]] = set()
+        # (stream key, error text) already logged — see sample(). MonitorSpec.key
+        # returns a tuple, not a str. Bounded by the number of configured monitor
+        # keys times their distinct failure modes.
+        self._logged_failures: set[tuple[tuple, str]] = set()
 
     # -- public ------------------------------------------------------------
     def sample(self, spec: MonitorSpec) -> Reading:
