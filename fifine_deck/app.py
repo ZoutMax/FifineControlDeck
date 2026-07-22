@@ -248,7 +248,24 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
             return 1
 
     ensure_dirs()
-    config = DeckConfig.load()
+    try:
+        config = DeckConfig.load()
+    except OSError as e:
+        # load() deliberately lets an I/O error through rather than treating an
+        # unreadable file as corrupt and moving the user's config aside — but
+        # nothing caught it here, so the app just failed to appear. Launched
+        # from the .desktop entry stderr goes to the journal, which nobody
+        # thinks to read when an icon does nothing. Say it on screen.
+        msg = (f"Your configuration could not be read:\n\n{e}\n\n"
+               f"Nothing has been changed. Fix the file's permissions, or move "
+               f"it aside to start with a fresh configuration.")
+        print(msg, file=sys.stderr)
+        try:
+            QMessageBox.critical(None, "fifine Control Deck", msg)
+        except Exception:
+            log.debug("could not show the config-error dialog", exc_info=True)
+        os.close(lock_fd)
+        return 1
     controller = DeckController(config)
 
     if assets.app_icon_path():

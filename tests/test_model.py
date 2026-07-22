@@ -5,7 +5,10 @@ All persistence uses an explicit tmp path — the real user config is never touc
 import json
 import os
 
-from fifine_deck.model import Action, DeckConfig, Folder, KeyConfig
+import pytest
+
+from fifine_deck.model import (Action, CONFIG_VERSION, DeckConfig, Folder,
+                                KeyConfig)
 
 
 def test_action_roundtrip():
@@ -444,3 +447,128 @@ def test_the_suite_never_sees_the_developers_real_home():
     for p in (os.environ.get("XDG_CONFIG_HOME", ""), autostart_file()):
         assert p, "path resolved to nothing"
         assert not p.startswith(real + "/"), f"{p} escapes the sandbox into the real home"
+
+
+# -- backups must not destroy the thing they are protecting -------------------
+
+def test_backup_paths_do_not_reuse_a_slot(tmp_path):
+    from fifine_deck.model import _next_backup_path
+    base = str(tmp_path / "config.json.bak")
+    assert _next_backup_path(base) == base
+    open(base, "w").close()
+    assert _next_backup_path(base) == base + ".2"
+    open(base + ".2", "w").close()
+    assert _next_backup_path(base) == base + ".3"
+
+
+def test_a_second_corruption_keeps_the_first_corpse(tmp_path):
+    """The .corrupt slot was fixed, so the second corruption overwrote the
+    first — and by then the file being saved is the blank config the recovery
+    just created, while the copy it replaced held the user's real work."""
+    path = str(tmp_path / "config.json")
+
+    cfg = DeckConfig()
+    cfg.active_profile().name = "THE REAL ONE"
+    cfg.save(path)
+    # a realistic corruption: a truncated write, so the file still HOLDS the
+    # user's work — that is what makes the .corrupt copy worth keeping
+    with open(path) as f:
+        good = f.read()
+    with open(path, "w") as f:
+        f.write(good[:len(good) // 2])
+    DeckConfig.load(path)                      # -> .corrupt, blank config saved
+
+    # second event, on the blank config the recovery just wrote
+    with open(path) as f:
+        blank = f.read()
+    with open(path, "w") as f:
+        f.write(blank[:len(blank) // 2])
+    DeckConfig.load(path)
+
+    names = []
+    for p in (path + ".corrupt", path + ".corrupt.2"):
+        if os.path.exists(p):
+            with open(p) as f:
+                names.append(f.read())
+    assert any("THE REAL ONE" in n for n in names), \
+        "the user's real config was overwritten by the blank one"
+
+
+def test_a_newer_config_is_relabelled_after_being_stripped(tmp_path):
+    """from_dict passed `version` through, so the stripped rewrite still
+    claimed to be the newer version — and the newer build reading it back would
+    treat its own destroyed fields as merely absent."""
+    path = str(tmp_path / "config.json")
+    cfg = DeckConfig()
+    cfg.save(path)
+    with open(path) as f:
+        data = json.load(f)
+    data["version"] = 99
+    data["a_future_setting"] = "keep me"
+    with open(path, "w") as f:
+        json.dump(data, f)
+
+    loaded = DeckConfig.load(path)
+    assert loaded.version == CONFIG_VERSION
+    assert os.path.exists(path + ".v99"), "no full copy was kept"
+    with open(path + ".v99") as f:
+        assert "a_future_setting" in f.read()
+
+
+def test_a_second_newer_config_is_also_backed_up(tmp_path):
+    """The slot was skipped when taken, so a different v99 config synced in
+    later was stripped with no backup at all."""
+    path = str(tmp_path / "config.json")
+    for marker in ("machine A", "machine B"):
+        DeckConfig().save(path)
+        with open(path) as f:
+            data = json.load(f)
+        data["version"] = 99
+        data["marker"] = marker
+        with open(path, "w") as f:
+            json.dump(data, f)
+        DeckConfig.load(path)
+
+    kept = []
+    for p in (path + ".v99", path + ".v99.2"):
+        if os.path.exists(p):
+            with open(p) as f:
+                kept.append(f.read())
+    assert any("machine A" in k for k in kept) and any("machine B" in k for k in kept), \
+        f"a newer config was stripped without a backup: {len(kept)} copies kept"
+
+
+def test_one_bad_profile_does_not_discard_the_whole_config(tmp_path):
+    """from_dict is total and would have kept everything; the shape gate was
+    stricter than the parser it guards."""
+    path = str(tmp_path / "config.json")
+    cfg = DeckConfig()
+    cfg.brightness = 70
+    cfg.active_profile().name = "WORK PROFILE"
+    cfg.save(path)
+    with open(path) as f:
+        data = json.load(f)
+    data["profiles"].append({"name": "hand-edited", "id": "x"})   # no "pages"
+    with open(path, "w") as f:
+        json.dump(data, f)
+
+    loaded = DeckConfig.load(path)
+    names = [p.name for p in loaded.profiles]
+    assert "WORK PROFILE" in names, f"config discarded: {names}"
+    assert "hand-edited" in names, f"the repaired profile was dropped: {names}"
+    assert loaded.brightness == 70, "top-level settings were reset"
+    assert not os.path.exists(path + ".corrupt")
+
+
+def test_a_failed_rename_leaves_no_stray_tmp(tmp_path, monkeypatch):
+    """A .tmp left behind is a private half-shadow copy of the config that
+    nothing ever removes and the user never learns about."""
+    path = str(tmp_path / "config.json")
+
+    def boom(src, dst):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(os, "replace", boom)
+    with pytest.raises(OSError):
+        DeckConfig().save(path)
+    assert not os.path.exists(path + ".tmp")

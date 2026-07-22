@@ -320,7 +320,11 @@ class DeckConfig:
             # O_CREAT's mode applies only when the file is CREATED. A stale
             # .tmp left 0644 by an older version's crash would keep its mode
             # and os.replace would carry that onto config.json — so force it.
-            os.fchmod(fd, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+            except BaseException:
+                os.close(fd)      # fdopen never ran, so nothing else will
+                raise
             with os.fdopen(fd, "w") as f:
                 json.dump(self.to_dict(), f, indent=2)
                 # fsync before the rename: without it, a power loss inside the
@@ -336,7 +340,18 @@ class DeckConfig:
                 pass
             raise
         # os.replace carries the temp file's 0600 mode onto the real path.
-        os.replace(tmp, path)
+        # Inside the cleanup guard too: a failed rename (a read-only directory,
+        # path turned into a directory) otherwise left the .tmp behind — a
+        # private half-shadow copy of the config that the user never learns
+        # about and nothing ever removes.
+        try:
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
         # Persist the rename itself. Best-effort: some filesystems refuse
         # directory fsync, and losing the rename (not the data) on power cut
         # just means the previous config shows up — never a truncated one.
@@ -378,16 +393,24 @@ class DeckConfig:
         distinguishes a mistyped top-level key ("Profiles") or some other
         application's JSON from a real config, which is the whole point of
         gating load() on a shape check.
+
+        One bad profile is also not grounds for discarding the file. Requiring
+        EVERY profile to be well-formed meant a single hand-edited one with a
+        missing `pages` sent the whole config — every other profile, plus
+        brightness and glow — to .corrupt and replaced it with a blank default,
+        when from_dict is total and would have kept the lot (it substitutes a
+        default page). So: recognisable if ANY profile looks like one, which
+        still rejects another application's list-of-somethings.
         """
         if not isinstance(data, dict) or "profiles" not in data:
             return False
         profiles = data["profiles"]
         if not isinstance(profiles, list):
             return False
-        for p in profiles:
-            if not isinstance(p, dict) or not isinstance(p.get("pages"), list):
-                return False
-        return True
+        if not profiles:
+            return True                  # empty is legitimate; see above
+        return any(isinstance(p, dict) and isinstance(p.get("pages"), list)
+                   for p in profiles)
 
     @classmethod
     def load(cls, path: Optional[str] = None) -> "DeckConfig":
@@ -429,18 +452,28 @@ class DeckConfig:
             except (TypeError, ValueError):
                 found = CONFIG_VERSION
             if found > CONFIG_VERSION:
-                keep = f"{path}.v{found}"
-                if not os.path.exists(keep):
-                    try:
-                        shutil.copy2(path, keep)
-                        log.warning("config.json was written by a newer version "
-                                    "(v%s > v%s); settings this build does not "
-                                    "know will be dropped. Kept a copy at %s",
-                                    found, CONFIG_VERSION, keep)
-                    except OSError:
-                        log.warning("config.json is from a newer version (v%s); "
-                                    "could not back it up", found)
-            return cls.from_dict(data)
+                # _next_backup_path, not "skip if it exists": a SECOND, different
+                # newer config synced in later was stripped with no backup at
+                # all, because the slot was already taken by the first one.
+                keep = _next_backup_path(f"{path}.v{found}")
+                try:
+                    shutil.copy2(path, keep)
+                    log.warning("config.json was written by a newer version "
+                                "(v%s > v%s); settings this build does not "
+                                "know will be dropped. Kept a copy at %s",
+                                found, CONFIG_VERSION, keep)
+                except OSError:
+                    log.warning("config.json is from a newer version (v%s); "
+                                "could not back it up", found)
+            cfg = cls.from_dict(data)
+            if found > CONFIG_VERSION:
+                # Label the file for what it now IS. from_dict passed `version`
+                # through verbatim, so the next save wrote a stripped config
+                # still claiming to be v%s — and the newer build reading it back
+                # would trust its own fields as merely absent rather than
+                # destroyed. The full copy is at `keep` either way.
+                cfg.version = CONFIG_VERSION
+            return cfg
         except (json.JSONDecodeError, AttributeError, ValueError,
                 TypeError, KeyError):
             # Corrupt or structurally-invalid config (bad JSON *or* wrong shape):
@@ -448,8 +481,14 @@ class DeckConfig:
             # ".bak" — that's the import flow's backup of a known-GOOD config
             # (main_window._import_config), and overwriting it with this
             # corpse would destroy the one copy the user could restore from.
+            #
+            # _next_backup_path, not a fixed ".corrupt": the second corruption
+            # event would otherwise overwrite the first, and by then the file
+            # being saved is the near-empty config this recovery just created,
+            # while the copy it replaces held the user's real work.
+            corpse = _next_backup_path(path + ".corrupt")
             try:
-                os.replace(path, path + ".corrupt")
+                os.replace(path, corpse)
             except OSError:
                 log.warning("config at %s could not be read and could not be "
                             "moved aside either; starting from defaults", path)
@@ -460,10 +499,31 @@ class DeckConfig:
                 # data-loss bug this recovery exists to prevent, and leaves them
                 # no idea their old settings are sitting right next to it.
                 log.warning("config at %s could not be read; it has been kept as "
-                            "%s.corrupt and replaced with defaults", path, path)
+                            "%s and replaced with defaults", path, corpse)
             cfg = cls()
             cfg.save(path)
             return cfg
+
+
+def _next_backup_path(base: str, limit: int = 20) -> str:
+    """A backup path that does not already exist: `base`, else `base.2`, `.3`…
+
+    A fixed backup name loses the thing it was protecting on the second use.
+    Try a friend's config, dislike it, import a different one, and import #2's
+    backup overwrites import #1's — which held the only copy of the
+    configuration you actually built. The corrupt-config path already reasons
+    about not clobbering this file; it just clobbered its own.
+
+    Past `limit` it reuses the last slot rather than growing without bound: at
+    that point the early backups are the valuable ones.
+    """
+    if not os.path.exists(base):
+        return base
+    for n in range(2, limit + 1):
+        candidate = f"{base}.{n}"
+        if not os.path.exists(candidate):
+            return candidate
+    return f"{base}.{limit}"
 
 
 def _is_users_work(kc) -> bool:

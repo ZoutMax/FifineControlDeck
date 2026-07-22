@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 from .. import rendering, assets
 from ..device import DEVICE_PROFILE
 from ..model import (DeckConfig, Profile, Page, KeyConfig, Action, Folder,
-                     _page_loss_summary)
+                     _next_backup_path, _page_loss_summary)
 from ..actions import default_icon_for
 from ..controller import DeckController
 from .widgets import (KeyButton, ActionEditor, ActionCatalog, KnobEditor,
@@ -255,18 +255,27 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Import failed",
                                 f"Not a valid configuration file:\n{e}")
             return
+        from ..model import CONFIG_PATH
+        backup = _next_backup_path(CONFIG_PATH + ".bak")
         if QMessageBox.question(
                 self, "Import configuration",
                 "Replace your current profiles, pages and settings with the "
-                "imported ones? Your current configuration is backed up first.") \
-                != QMessageBox.StandardButton.Yes:
+                "imported ones?\n\nYour current configuration is backed up to\n"
+                f"{backup}") != QMessageBox.StandardButton.Yes:
             return
-        # Back up the current config before replacing it.
-        from ..model import CONFIG_PATH
+        # Back up the current config before replacing it, and treat a failed
+        # backup as a failed import. The dialog above PROMISES the backup, so
+        # swallowing the error and replacing anyway is the one outcome the user
+        # explicitly did not agree to: no backup, no warning, no way back.
         try:
-            self.config.save(CONFIG_PATH + ".bak")
-        except Exception:
-            pass
+            self.config.save(backup)
+        except Exception as e:
+            QMessageBox.warning(
+                self, "Import cancelled",
+                f"Your current configuration could not be backed up:\n{e}\n\n"
+                f"Nothing was changed.")
+            log.error("import aborted: backup to %s failed: %s", backup, e)
+            return
         # Mutate the existing config object in place so the controller keeps its
         # reference.
         self.config.brightness = imported.brightness
@@ -286,8 +295,21 @@ class MainWindow(QMainWindow):
         self._deselect()
         self.controller.apply_brightness()
         self.controller.render_page()
-        self.config.save()
-        self.statusBar().showMessage("Configuration imported", 4000)
+        # Guarded like _autosave is. A bare save() here meant that on failure
+        # the grid already showed the imported config, nothing had reached the
+        # disk, this status line never ran, and the user saw only a traceback
+        # on stderr — with in-memory and on-disk state silently diverged.
+        try:
+            self.config.save()
+        except Exception as e:
+            log.error("saving the imported config failed: %s", e)
+            QMessageBox.warning(
+                self, "Import not saved",
+                f"The imported configuration is loaded, but could not be "
+                f"written to disk:\n{e}\n\nYour previous configuration is at\n"
+                f"{backup}")
+            return
+        self.statusBar().showMessage(f"Configuration imported (backup: {backup})", 6000)
 
     def show_and_raise(self):
         self.showNormal()

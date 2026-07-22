@@ -5,6 +5,7 @@ test). The GUI had no unit coverage at all, yet it owns two things that have
 already broken in the field: the boundary where device events cross from the
 SDK's reader thread onto the Qt thread, and the snap access hint.
 """
+import os
 import threading
 
 import pytest
@@ -1520,3 +1521,54 @@ def test_the_page_prompt_counts_a_nested_folder_tree(win):
     w._del_page()
     text = _AutoBox.questions[-1]
     assert "3 keys" in text, f"nested keys not counted: {text!r}"
+
+
+# -- import must not destroy what it promised to keep -------------------------
+
+def _import_from(w, monkeypatch, tmp_path, name, marker):
+    """Write a one-profile config to disk and import it through the GUI."""
+    src = tmp_path / name
+    other = DeckConfig()
+    other.active_profile().name = marker
+    other.save(str(src))
+    monkeypatch.setattr(mw.QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(src), "")))
+    _AutoBox.answer = QMessageBox.StandardButton.Yes
+    w._import_config()
+
+
+def test_a_second_import_keeps_the_first_ones_backup(win, monkeypatch, tmp_path):
+    """The backup path was fixed, so import #2 overwrote import #1's backup —
+    which held the only copy of the configuration the user actually built."""
+    from fifine_deck.model import CONFIG_PATH
+    w, cfg, c = win
+    cfg.active_profile().name = "MY ORIGINAL WORK"
+
+    _import_from(w, monkeypatch, tmp_path, "a.json", "FRIEND A")
+    _import_from(w, monkeypatch, tmp_path, "b.json", "FRIEND B")
+
+    kept = []
+    for p in (CONFIG_PATH + ".bak", CONFIG_PATH + ".bak.2"):
+        if os.path.exists(p):
+            kept.append(DeckConfig.load(p).active_profile().name)
+    assert "MY ORIGINAL WORK" in kept, f"the original is unrecoverable: {kept}"
+
+
+def test_a_failed_backup_cancels_the_import(win, monkeypatch, tmp_path):
+    """The dialog promises a backup. Swallowing the failure and replacing the
+    config anyway is the one outcome the user did not agree to."""
+    w, cfg, c = win
+    cfg.active_profile().name = "KEEP ME"
+    real_save = DeckConfig.save
+
+    def save(self, path=None):
+        if path is not None and ".bak" in str(path):
+            raise OSError("No space left on device")
+        return real_save(self, path)
+
+    monkeypatch.setattr(DeckConfig, "save", save)
+    _import_from(w, monkeypatch, tmp_path, "c.json", "SHOULD NOT LAND")
+
+    assert cfg.active_profile().name == "KEEP ME", "imported despite no backup"
+    assert any("could not be backed up" in t for t in _AutoBox.warns), \
+        "the failed backup was not reported"
