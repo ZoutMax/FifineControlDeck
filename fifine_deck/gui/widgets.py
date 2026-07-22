@@ -839,13 +839,29 @@ class ActionEditor(QWidget):
         # than refuse. Only worth a prompt when there is something to lose.
         if self._kc.folder is not None:
             inner = _folder_loss_summary(self._kc.folder)
-            if inner and QMessageBox.question(
-                    self, "Clear key",
-                    f"This key holds a folder containing {inner}.\n\n"
-                    f"Clearing the key deletes the folder and everything in "
-                    f"it. This cannot be undone.\n\nClear it anyway?"
-            ) != QMessageBox.StandardButton.Yes:
-                return
+            if inner:
+                target = self._kc            # what the question is ABOUT
+                if QMessageBox.question(
+                        self, "Clear key",
+                        f"This key holds a folder containing {inner}.\n\n"
+                        f"Clearing the key deletes the folder and everything in "
+                        f"it. This cannot be undone.\n\nClear it anyway?"
+                ) != QMessageBox.StandardButton.Yes:
+                    return
+                # This dialog runs a nested event loop, so a page or profile
+                # change pushed by the DECK can land while it is open and
+                # deselect the key underneath it (_kc becomes None) — the same
+                # hazard _apply_picked_icon below documents for the pickers.
+                # Clearing then raised AttributeError on the first assignment,
+                # so the user confirmed and nothing happened at all, with only
+                # a traceback on stderr. Re-check, and never clear a DIFFERENT
+                # key than the one described in the question.
+                if self._kc is None or self._index is None or self._kc is not target:
+                    QMessageBox.information(
+                        self, "Clear key",
+                        "The key changed while the question was open, so "
+                        "nothing was cleared. Select it again and retry.")
+                    return
         default = KeyConfig()
         self._kc.label = default.label
         self._kc.icon = default.icon

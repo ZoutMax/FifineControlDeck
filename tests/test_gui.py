@@ -1572,3 +1572,103 @@ def test_a_failed_backup_cancels_the_import(win, monkeypatch, tmp_path):
     assert cfg.active_profile().name == "KEEP ME", "imported despite no backup"
     assert any("could not be backed up" in t for t in _AutoBox.warns), \
         "the failed backup was not reported"
+
+
+# -- confirmations run a nested event loop; the deck can move under them ------
+
+class _ActingBox(_AutoBox):
+    """A question() that does something to the controller BEFORE answering.
+
+    That is exactly what a real modal allows: QMessageBox.question spins a
+    nested Qt event loop, and the action worker mutates page_index/_container
+    straight from a deck key press without needing Qt's cooperation at all.
+    """
+    during = None
+
+    @staticmethod
+    def question(parent, title, text, *a, **k):
+        _AutoBox.questions.append(text)
+        if _ActingBox.during:
+            _ActingBox.during()
+        return _AutoBox.answer
+
+
+def test_deleting_a_page_deletes_the_one_it_asked_about(win, monkeypatch):
+    """0.12.0 regression: the target was re-read AFTER the dialog, so pressing
+    "Next page" on the deck while the confirmation was up deleted the page
+    after the one named in the prompt, then autosaved it."""
+    from fifine_deck.model import Page
+    w, cfg, c = win
+    cont = cfg.active_profile()
+    cont.pages[0].name = "P1"
+    cont.pages += [Page(name="P2"), Page(name="P3")]
+    _stock_folder_key(w, cfg, index=1, label="Work")     # make P1 worth asking about
+    for p in (cont.pages[1], cont.pages[2]):
+        p.key(1).label = "x"; p.key(1).action = mw.Action("media", {"cmd": "play"})
+    w._reload_pages()
+    c.page_index = 1                                     # viewing P2
+    doomed = cont.pages[1]
+
+    monkeypatch.setattr(mw, "QMessageBox", _ActingBox)
+    _AutoBox.answer = QMessageBox.StandardButton.Yes
+    _ActingBox.during = lambda: setattr(c, "page_index", 2)   # deck: next page
+    try:
+        w._del_page()
+    finally:
+        _ActingBox.during = None
+
+    names = [p.name for p in cont.pages]
+    assert "P2" not in names, f"the page named in the prompt survived: {names}"
+    assert "P3" in names, f"a page the user never agreed to delete went: {names}"
+    assert doomed not in cont.pages
+
+
+def test_deleting_a_page_after_leaving_a_folder_does_not_raise(win, monkeypatch):
+    """The folder variant: `cont` stayed the folder while page_index became a
+    root index, so the delete raised IndexError inside the lock and silently
+    did nothing."""
+    from fifine_deck.model import Folder, Page
+    w, cfg, c = win
+    root = cfg.active_profile()
+    root.pages += [Page(name="R2"), Page(name="R3"), Page(name="R4")]
+    fld = Folder(name="F", pages=[Page(name="F1"), Page(name="F2")])
+    for p in fld.pages:
+        p.key(1).label = "y"; p.key(1).action = mw.Action("media", {"cmd": "play"})
+    # enter the folder FROM a high root index: go_back restores that index,
+    # and the folder has only 2 pages, so the stale index is out of range
+    root.pages[3].key(2).action = mw.Action("open_folder", {})
+    root.pages[3].key(2).folder = fld
+    c.page_index = 3
+    c.enter_folder(fld)
+    c.page_index = 1
+    w._reload_pages()
+
+    monkeypatch.setattr(mw, "QMessageBox", _ActingBox)
+    _AutoBox.answer = QMessageBox.StandardButton.Yes
+    _ActingBox.during = lambda: c.go_back()          # deck: back out of folder
+    try:
+        w._del_page()                                 # must not raise
+    finally:
+        _ActingBox.during = None
+    assert len(root.pages) == 4, "a root page was deleted from a folder prompt"
+
+
+def test_clearing_a_key_deselected_mid_prompt_is_a_clean_no_op(win, monkeypatch):
+    """0.12.0 regression: the modal let a deck page change deselect the key, so
+    _kc became None and the first assignment raised AttributeError -- the user
+    confirmed and nothing was cleared, with only a traceback on stderr."""
+    w, cfg, c = win
+    kc = _stock_folder_key(w, cfg, index=1, label="Work")
+    w._on_key_selected(1)
+    assert w.editor._kc is kc
+
+    monkeypatch.setattr(wdg, "QMessageBox", _ActingBox)
+    _AutoBox.answer = QMessageBox.StandardButton.Yes
+    _ActingBox.during = lambda: w.editor.clear()      # what _deselect does
+    try:
+        w.editor._clear_key()                          # must not raise
+    finally:
+        _ActingBox.during = None
+
+    assert kc.folder is not None, "cleared a key that was no longer selected"
+    assert kc.label == "Work"

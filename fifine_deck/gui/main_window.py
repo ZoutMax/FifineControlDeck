@@ -631,15 +631,38 @@ class MainWindow(QMainWindow):
                 f"Delete '{page.name}'?\n\nThis removes {loss}.\n"
                 f"It cannot be undone.") != QMessageBox.StandardButton.Yes:
             return
-        # Under the controller's lock: controller.page() clamps page_index
-        # against len(pages) and then indexes, so between the del and the
-        # reassignment below a reader (the SDK reader thread dispatching a key
-        # press, the monitor thread) could clamp against the old length and
-        # index the shortened list. The lock page() takes is an RLock on the
-        # controller, and this is the one mutation of pages that ran outside it.
+        # Delete the page we ASKED about, by identity, not whatever index is
+        # current now.
+        #
+        # QMessageBox.question runs a nested event loop, and the action worker
+        # mutates page_index and _container directly from a deck key press. So
+        # between naming a page in the prompt and acting on the answer, the
+        # target could move: pressing "Next page" while the confirmation was up
+        # deleted the page AFTER the one named, and a "Back out of folder"
+        # press left `cont` pointing at the folder while page_index was a root
+        # index, raising IndexError inside the lock. The same nested-loop
+        # hazard is documented for the icon pickers in widgets.py; this dialog
+        # was a third one and did not account for it.
+        #
+        # The lock still matters for the mutation itself: controller.page()
+        # clamps page_index against len(pages) and then indexes, so a reader
+        # could otherwise clamp against the old length and index the shortened
+        # list.
         with self.controller._lock:
-            del cont.pages[self.controller.page_index]
-            self.controller.page_index = 0
+            try:
+                doomed = cont.pages.index(page)
+            except ValueError:
+                # It went away while the prompt was up (another delete, an
+                # import, a profile switch). Nothing to do, and deleting
+                # something else would be exactly the bug.
+                log.info("delete page: '%s' is already gone; nothing deleted",
+                         page.name)
+                return
+            if len(cont.pages) <= 1:
+                return                      # last page now; the guard above stands
+            del cont.pages[doomed]
+            if self._container() is cont:
+                self.controller.page_index = 0
         # The editor/knob panels may be bound to the page we just deleted.
         # The async page-change resync can't be relied on to clear them:
         # deleting the page at index 0 keeps (container, page_index) equal,

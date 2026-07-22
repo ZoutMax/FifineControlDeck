@@ -403,23 +403,36 @@ class DeckConfig:
         application's JSON from a real config, which is the whole point of
         gating load() on a shape check.
 
-        One bad profile is also not grounds for discarding the file. Requiring
-        EVERY profile to be well-formed meant a single hand-edited one with a
-        missing `pages` sent the whole config — every other profile, plus
-        brightness and glow — to .corrupt and replaced it with a blank default,
-        when from_dict is total and would have kept the lot (it substitutes a
-        default page). So: recognisable if ANY profile looks like one, which
-        still rejects another application's list-of-somethings.
+        EVERY profile must be well-formed, and that strictness is the point.
+
+        0.12.0 loosened this to "any profile looks like one", reasoning that one
+        hand-edited profile should not send the whole file to .corrupt when
+        from_dict is total and would keep the rest. That reasoning was WRONG,
+        and the trade it made was strictly bad.
+
+        from_dict is total only in the sense that it does not raise. For a
+        profile whose `pages` is a JSON object instead of a list — a jq mishap,
+        a merge conflict, a sync — it keeps the name and id and SUBSTITUTES A
+        SINGLE EMPTY PAGE, silently discarding every key that object held. The
+        loosened gate let such a file load, and the first save (which _quit
+        performs unconditionally) then wrote the mangled result over the
+        original with no backup of any kind. A differential fuzz over 400
+        generated configs found 25 where 0.11.3 preserved a recoverable copy
+        and 0.12.0 did not.
+
+        Failing the gate is not data loss: the file is moved to .corrupt intact
+        and the user is told. Losing a profile's contents with no copy anywhere
+        is. Prefer the recoverable annoyance every time.
         """
         if not isinstance(data, dict) or "profiles" not in data:
             return False
         profiles = data["profiles"]
         if not isinstance(profiles, list):
             return False
-        if not profiles:
-            return True                  # empty is legitimate; see above
-        return any(isinstance(p, dict) and isinstance(p.get("pages"), list)
-                   for p in profiles)
+        for p in profiles:
+            if not isinstance(p, dict) or not isinstance(p.get("pages"), list):
+                return False
+        return True
 
     @classmethod
     def load(cls, path: Optional[str] = None) -> "DeckConfig":

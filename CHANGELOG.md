@@ -4,6 +4,33 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.12.1] - 2026-07-22
+
+Fixes three defects introduced by 0.12.0 itself, found by an adversarial review
+of that release and each reproduced before being fixed. If you are on 0.12.0,
+update.
+
+### Fixed
+- **A configuration with one damaged profile is preserved again instead of
+  being quietly emptied.** 0.12.0 relaxed the check that decides whether a
+  config file is readable, so a file whose second profile had a damaged page
+  list would load: that profile came back with a single blank page, and the
+  next save wrote the result over your file with no copy kept anywhere. 0.11.3
+  had set such a file aside as `config.json.corrupt`, intact and recoverable.
+  The stricter check is back. Being handed a fresh configuration with the old
+  one safe beside it is an inconvenience; losing a profile's contents with no
+  copy is not, and the trade was the wrong way round.
+- **Deleting a page now deletes the page it asked you about.** The new
+  confirmation left a window in which a key press on the deck could move which
+  page was current, and the deletion used the new position: confirming
+  "Delete 'P2'?" while pressing a page key could remove P3 instead. Coming back
+  out of a folder during the same prompt could also make the deletion fail
+  silently. The page is now identified by which page it is, not by where it sat.
+- **"Clear key" no longer does nothing after you confirm it.** If a page or
+  profile change arrived from the deck while its confirmation was open, the key
+  was deselected underneath it and clearing then failed with nothing on screen
+  to say so. It now says the key changed and asks you to try again.
+
 ## [0.12.0] - 2026-07-22
 
 From three independent audits: the action engine, the configuration model, and

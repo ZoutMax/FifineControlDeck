@@ -538,9 +538,16 @@ def test_a_second_newer_config_is_also_backed_up(tmp_path):
         f"a newer config was stripped without a backup: {len(kept)} copies kept"
 
 
-def test_one_bad_profile_does_not_discard_the_whole_config(tmp_path):
-    """from_dict is total and would have kept everything; the shape gate was
-    stricter than the parser it guards."""
+def test_one_bad_profile_preserves_the_file_rather_than_mangling_it(tmp_path):
+    """This test used to assert the opposite, and the assertion was the bug.
+
+    0.12.0 loosened the shape gate so a file with one malformed profile would
+    load instead of being preserved. That reads as friendlier, but from_dict
+    silently replaces the malformed profile's pages with a single empty one,
+    and the next save writes that over the original. Preserving the file to
+    .corrupt loses nothing and is recoverable; loading it loses everything the
+    malformed profile held.
+    """
     path = str(tmp_path / "config.json")
     cfg = DeckConfig()
     cfg.brightness = 70
@@ -553,11 +560,11 @@ def test_one_bad_profile_does_not_discard_the_whole_config(tmp_path):
         json.dump(data, f)
 
     loaded = DeckConfig.load(path)
-    names = [p.name for p in loaded.profiles]
-    assert "WORK PROFILE" in names, f"config discarded: {names}"
-    assert "hand-edited" in names, f"the repaired profile was dropped: {names}"
-    assert loaded.brightness == 70, "top-level settings were reset"
-    assert not os.path.exists(path + ".corrupt")
+    assert [p.name for p in loaded.profiles] == ["Default"]     # fresh default
+    assert os.path.exists(path + ".corrupt"), "the original was not preserved"
+    with open(path + ".corrupt") as f:
+        kept = f.read()
+    assert "WORK PROFILE" in kept and "hand-edited" in kept
 
 
 def test_a_failed_rename_leaves_no_stray_tmp(tmp_path, monkeypatch):
@@ -624,3 +631,43 @@ def test_a_pathologically_nested_config_is_recovered_not_a_crash(tmp_path):
     cfg = DeckConfig.load(path)          # must not raise
     assert cfg.profiles
     assert os.path.exists(path + ".corrupt")
+
+
+def test_a_malformed_profile_is_preserved_not_silently_emptied(tmp_path):
+    """0.12.0 regression: loosening the shape gate to "ANY profile looks like
+    one" let a file load whose second profile had a dict `pages` holding real
+    keys. from_dict substitutes ONE EMPTY PAGE for it, and the first save wrote
+    that over the original with no backup anywhere -- permanent loss of data
+    that 0.11.3 kept intact at .corrupt."""
+    path = str(tmp_path / "config.json")
+    keys = {str(i): {"label": f"macro{i}",
+                     "action": {"type": "run_command",
+                                "params": {"command": f"cmd{i}"}}}
+            for i in range(1, 13)}
+    doc = {
+        "version": 1, "brightness": 42, "glow": False,
+        "active_profile_id": "goodgood",
+        "profiles": [
+            {"name": "Good", "id": "goodgood",
+             "pages": [{"name": "P1", "id": "p1", "keys": {}, "knobs": {}}]},
+            # `pages` is an OBJECT, not a list -- a jq mishap or merge conflict
+            {"name": "Work", "id": "workwork",
+             "pages": {"0": {"name": "Work", "id": "w1", "keys": keys,
+                             "knobs": {}}}},
+        ],
+    }
+    with open(path, "w") as f:
+        json.dump(doc, f)
+
+    cfg = DeckConfig.load(path)
+    cfg.save(path)                       # what _quit does on every launch
+
+    # the twelve macros must still exist SOMEWHERE on disk
+    blob = ""
+    for name in os.listdir(tmp_path):
+        fp = tmp_path / name
+        if fp.is_file():
+            with open(fp, errors="ignore") as f:
+                blob += f.read()
+    assert "macro12" in blob, "a profile's keys were destroyed with no copy kept"
+    assert os.path.exists(path + ".corrupt"), "nothing was preserved"
