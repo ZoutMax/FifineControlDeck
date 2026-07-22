@@ -46,6 +46,11 @@ class _PendingHold:
 
 log = logging.getLogger(__name__)
 
+# Key presses that may wait for the single action worker. Deliberately
+# small: a deck has 15 keys, so anything beyond a couple of dozen pending
+# is a backlog nobody wants replayed. See _enqueue.
+ACTION_QUEUE_MAX = 32
+
 
 class DeckController:
     def __init__(self, config: DeckConfig):
@@ -69,7 +74,15 @@ class DeckController:
         # Actions run on a dedicated worker thread so a slow action (e.g. a
         # multi-action with delays, or a blocking command) never stalls the
         # SDK reader thread that delivers key events.
-        self._action_queue: queue.Queue = queue.Queue()
+        # Bounded. One worker runs everything in order, and a multi-action's
+        # delay holds it (up to actions.MAX_STEP_DELAY per step), so presses
+        # made while it waits were neither run nor dropped — they piled up and
+        # then fired all at once. Measured: five presses of a "next page" key
+        # during a 2 s delay left the deck looking dead and then advanced five
+        # pages in one go. A macro deck wants recent intent, not a backlog, so
+        # past this point the newest press is refused and said so.
+        self._action_queue: queue.Queue = queue.Queue(maxsize=ACTION_QUEUE_MAX)
+        self._dropped_actions = 0
         self._action_thread = threading.Thread(target=self._action_worker, daemon=True)
         self._action_thread.start()
 
@@ -307,7 +320,18 @@ class DeckController:
         self._running = False
         self._cancel_holds()
         self._monitor_stop.set()
-        self._action_queue.put(None)   # unblock + end the action worker
+        # Make room first: the queue is bounded now, and a plain put() on a
+        # full one would block the whole shutdown behind a worker that is
+        # itself inside a multi-action delay.
+        while True:
+            try:
+                self._action_queue.put_nowait(None)   # unblock + end the worker
+                break
+            except queue.Full:
+                try:
+                    self._action_queue.get_nowait()
+                except queue.Empty:
+                    break
         self._decode_queue.put(None)   # and the gif decode worker
         dev = self.device
         # Drop the callback BEFORE taking the lock: a _key_callback already
@@ -812,8 +836,22 @@ class DeckController:
 
     # -- input dispatch ----------------------------------------------------
     def _enqueue(self, task):
-        """Queue a 0-arg callable to run on the worker thread."""
-        self._action_queue.put(task)
+        """Queue a 0-arg callable to run on the worker thread.
+
+        Never blocks: this runs on the SDK reader thread, which must keep
+        delivering key events. A full queue means the worker is stuck in
+        something slow, and the honest answer is to refuse the press rather
+        than promise to run it minutes later.
+        """
+        try:
+            self._action_queue.put_nowait(task)
+        except queue.Full:
+            self._dropped_actions += 1
+            if self._dropped_actions == 1:
+                log.warning("action queue full (%d pending): the worker is busy, "
+                            "probably in a multi-action delay. Dropping this key "
+                            "press; further drops will be counted, not logged",
+                            ACTION_QUEUE_MAX)
 
     def _dispatch(self, action):
         """Queue an action (or folder navigation) on the worker thread so a slow

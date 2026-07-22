@@ -4,6 +4,7 @@ A MockDevice implements the small surface the controller uses, so we can test
 the connect->render path, page/profile/folder navigation, brightness, key-press
 dispatch and the press flash without a real Stream Dock.
 """
+import threading
 import time
 
 import pytest
@@ -686,3 +687,46 @@ def test_an_unfingerprintable_image_is_always_sent():
 
     assert c._key_face_changed(1, _Weird()) is True
     assert c._key_face_changed(1, _Weird()) is True
+
+
+def test_the_action_queue_refuses_a_backlog_rather_than_replaying_it():
+    """One worker runs everything in order and a multi-action delay holds it,
+    so presses made meanwhile were neither run nor dropped: they piled up and
+    fired all at once. Five presses of "next page" during a 2 s delay left the
+    deck looking dead and then advanced five pages in one go."""
+    import queue as _queue
+    from fifine_deck.controller import ACTION_QUEUE_MAX
+    cfg = DeckConfig()
+    c = DeckController(cfg)
+    try:
+        blocked = threading.Event()
+        release = threading.Event()
+        c._enqueue(lambda: (blocked.set(), release.wait(10)))
+        assert blocked.wait(5), "the worker never started"
+
+        for _ in range(ACTION_QUEUE_MAX * 3):
+            c._enqueue(lambda: None)
+        assert c._action_queue.qsize() <= ACTION_QUEUE_MAX
+        assert c._dropped_actions > 0, "an unbounded backlog was accepted"
+    finally:
+        release.set()
+        c.stop()
+
+
+def test_stop_does_not_block_on_a_full_action_queue():
+    """The shutdown sentinel is put on the same bounded queue, so a plain put()
+    would wait behind a worker stuck in a multi-action delay."""
+    cfg = DeckConfig()
+    c = DeckController(cfg)
+    blocked = threading.Event()
+    release = threading.Event()
+    try:
+        c._enqueue(lambda: (blocked.set(), release.wait(10)))
+        assert blocked.wait(5)
+        for _ in range(c._action_queue.maxsize * 2):
+            c._enqueue(lambda: None)
+        done = threading.Event()
+        threading.Thread(target=lambda: (c.stop(), done.set()), daemon=True).start()
+        assert done.wait(10), "stop() blocked on the full queue"
+    finally:
+        release.set()
