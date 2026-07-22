@@ -4,7 +4,7 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.12.0] - 2026-07-22
 
 From three independent audits: the action engine, the configuration model, and
 the system-monitor sampler. Nothing here was reported by a user, and none of it
