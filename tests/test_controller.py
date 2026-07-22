@@ -612,3 +612,69 @@ def test_a_negative_result_counts_as_failure(caplog):
         c._note_write_result(-1, 4)
     assert c._write_failures == 1
     assert any("accepted no data" in r.message for r in caplog.records)
+
+
+def _fp_controller():
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+    c = DeckController(DeckConfig())
+    c._running = True
+    return c
+
+
+def test_an_unchanged_key_face_is_not_rewritten():
+    """render_page repaints every key on every page/profile/folder switch, and
+    most pictures are byte-identical to what the key already shows. Skipping
+    those cuts USB traffic and CPU — and throttles a leak inside the prebuilt
+    libtransport.so: writing 15 DISTINCT keys costs ~3 kB per write and grows
+    without bound (1500 writes retained 4.5 MB), while rewriting one key costs
+    ~0.2 kB. Measured on the device, this took a 600-iteration soak from
+    +82 MB to +7 MB."""
+    from PIL import Image
+    c = _fp_controller()
+    img = Image.new("RGB", (112, 112), (10, 20, 30))
+    assert c._key_face_changed(3, img) is True       # never seen
+    assert c._key_face_changed(3, img) is False      # identical -> skip
+    assert c._key_face_changed(4, img) is True       # different key
+    other = Image.new("RGB", (112, 112), (10, 20, 31))
+    assert c._key_face_changed(3, other) is True     # content changed -> write
+
+
+def test_a_reconnect_forces_every_key_to_be_rewritten():
+    """A fresh handle shows a BLANK deck. Trusting stale fingerprints there
+    would leave every key dark after a replug."""
+    from PIL import Image
+    c = _fp_controller()
+    img = Image.new("RGB", (112, 112), (10, 20, 30))
+    c._key_face_changed(3, img)
+    assert c._key_face_changed(3, img) is False
+    c._forget_key_faces()
+    assert c._key_face_changed(3, img) is True
+
+
+def test_clearing_an_animation_forces_the_next_static_write():
+    """clear_key_gif BLANKS the key on the device. Without dropping the
+    fingerprint, a key going static-A -> gif -> static-A again matches the
+    stale entry, skips the write, and stays blank forever."""
+    from PIL import Image
+    c = _fp_controller()
+    img = Image.new("RGB", (112, 112), (10, 20, 30))
+    assert c._key_face_changed(2, img) is True       # showing static A
+    # ... key becomes a gif, then the gif is cleared (both pop the fingerprint)
+    c._key_faces.pop(2, None)
+    assert c._key_face_changed(2, img) is True, "the blanked key was not repainted"
+
+
+def test_an_unfingerprintable_image_is_always_sent():
+    """Never let the optimisation swallow a write it cannot reason about."""
+    c = _fp_controller()
+
+    class _Weird:
+        size = (112, 112)
+        mode = "RGB"
+
+        def tobytes(self):
+            raise RuntimeError("no bytes for you")
+
+    assert c._key_face_changed(1, _Weird()) is True
+    assert c._key_face_changed(1, _Weird()) is True

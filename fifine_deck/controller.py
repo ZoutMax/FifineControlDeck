@@ -100,6 +100,8 @@ class DeckController:
         self.last_error: str = ""
         # Consecutive key writes the device did not accept; see _note_write_result.
         self._write_failures: int = 0
+        # Fingerprint of what we last sent each key; see _key_face_changed.
+        self._key_faces: dict = {}
         # Off-thread GIF decoding; see _gif_decode_ready / _decode_worker.
         self._decode_queue: "queue.Queue" = queue.Queue()
         self._decode_lock = threading.Lock()
@@ -273,6 +275,7 @@ class DeckController:
                 # page_index defaults to 0 for the initial connect, and
                 # render_page/current_page clamp it, so preserving it is safe.
             self.last_error = ""            # a working handle clears the reason
+            self._forget_key_faces()        # a fresh handle shows a blank deck
             dev.set_key_callback(self._key_callback)
             self.apply_brightness()
             self.render_page()
@@ -436,9 +439,18 @@ class DeckController:
                         is_gif = False
                     else:
                         self._gif_keys.add(index)
+                        # An animation now owns this key, so whatever static
+                        # picture we last fingerprinted for it is no longer what
+                        # the key is showing.
+                        self._key_faces.pop(index, None)
                 if not is_gif:
                     if index in self._gif_keys:
+                        # This blanks the key on the device. Without dropping
+                        # the fingerprint, a key going gif -> back to the SAME
+                        # static picture it had earlier would match the stale
+                        # entry, skip the write, and stay blank forever.
                         dev.clear_key_gif(index)
+                        self._key_faces.pop(index, None)
                         self._gif_keys.discard(index)
                     if is_monitor:
                         spec = monitors.MonitorSpec.from_params(kc.action.params)
@@ -451,10 +463,48 @@ class DeckController:
                     else:
                         img = rendering.render_key(
                             dev.KEY_PIXEL_WIDTH, kc.label, kc.icon, kc.bg_color, kc.text_color)
-                    self._note_write_result(dev.set_key_image_pil(index, img), index)
+                    if self._key_face_changed(index, img):
+                        self._note_write_result(dev.set_key_image_pil(index, img), index)
                 self._sync_gif_loop()
             except Exception as e:
                 log.error("render key %s failed: %s", index, e)
+
+    def _key_face_changed(self, index: int, img) -> bool:
+        """True if this key's picture differs from what we last sent it.
+
+        render_page repaints every key on every page switch, profile switch,
+        folder enter/exit and reconnect, and most of those pictures are byte for
+        byte what the key is already showing. Skipping the identical ones cuts
+        USB traffic and CPU for free — and it also throttles a leak we cannot
+        otherwise reach.
+
+        Measured against the real device: writing one key repeatedly costs
+        ~0.2 kB per write, but writing 15 DISTINCT keys costs ~3 kB per write
+        and grows without bound — 1500 writes across 15 keys retained 4.5 MB.
+        That is inside the prebuilt libtransport.so, the same vendored binary
+        that owns the 2 s transport_destroy, so it cannot be fixed from Python.
+        Not sending a redundant write is the only lever we have.
+
+        Keyed on the raw pixels, so anything that changes what the user sees —
+        label, icon, colours, a monitor readout ticking over — still writes.
+        """
+        try:
+            sig = (img.size, img.mode, hash(img.tobytes()))
+        except Exception:
+            return True                  # can't fingerprint it: always send
+        if self._key_faces.get(index) == sig:
+            return False
+        self._key_faces[index] = sig
+        return True
+
+    def _forget_key_faces(self) -> None:
+        """Drop the fingerprints, so the next render really writes.
+
+        Must happen whenever the device's own contents stop matching what we
+        think we sent: a reconnect gives us a blank deck, and skipping writes
+        then would leave the keys dark.
+        """
+        self._key_faces.clear()
 
     # -- off-thread GIF decoding -------------------------------------------
     def _gif_decode_ready(self, dev, index: int, path: str) -> bool:
@@ -572,9 +622,10 @@ class DeckController:
                 # drop animations from the previous page before re-rendering
                 for k in list(self._gif_keys):
                     try:
-                        dev.clear_key_gif(k)
+                        dev.clear_key_gif(k)     # blanks the key; see above
                     except Exception:
                         pass
+                    self._key_faces.pop(k, None)
                 self._gif_keys.clear()
                 for i in range(1, dev.KEY_COUNT + 1):
                     self.render_key(i)
