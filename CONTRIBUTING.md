@@ -27,13 +27,15 @@ dir — please keep it that way).
 
 ## Packaging
 - **.deb:** `./packaging/build-deb.sh <version> <amd64|arm64>`
+- **AppImage:** `./packaging/build-appimage.sh [version]` — see
+  [`docs/APPIMAGE.md`](docs/APPIMAGE.md)
 - **snap:** `snapcraft pack`
 - **PPA source:** `debuild -S` — see [`docs/PPA.md`](docs/PPA.md)
 
 ## Releasing
 `./release.sh <version> "what changed"` bumps the snap + deb version, tags, and
 pushes to GitHub. The tag triggers the GitHub Release workflow (builds +
-attaches the `.deb`s). Then promote the snap and `dput` the PPA.
+attaches the `.deb`s and the AppImage). Then promote the snap and `dput` the PPA.
 
 Write the `## [<version>]` CHANGELOG section **first** — `release.sh` refuses to
 run without it, and so does `tests/test_packaging.py`.

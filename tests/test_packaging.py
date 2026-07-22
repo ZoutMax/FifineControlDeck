@@ -310,3 +310,57 @@ def test_release_workflow_validates_the_metadata_it_publishes():
         "validation step would fail: tools never installed"
     assert job.index("appstreamcli validate") < job.index("build-deb.sh"), \
         "validation must gate the build, not follow it"
+
+
+# -- AppImage -----------------------------------------------------------------
+
+def test_appimage_build_script_guards_the_transport_lib():
+    """Same guard build-deb.sh and debian/rules carry: without the x86_64
+    transport .so the app starts but can never open the device, and a whole run
+    of PPA debs once shipped exactly that way."""
+    src = _read("packaging/build-appimage.sh")
+    assert "libtransport.so" in src
+    assert "refusing to build" in src, "no hard failure if the .so is missing"
+    assert "libtransport_arm64.so" in src, "the wrong-arch lib is not stripped"
+
+
+def test_appimage_prune_refuses_an_empty_closure():
+    """The prune deletes Qt libraries. Computing the closure with ldd silently
+    returned NOTHING during development — ldd only reports a resolved path, and
+    the bundled libs resolve via an RPATH that is not in effect — so it deleted
+    all 109 of them. The floor is the tripwire for that returning."""
+    src = _read("packaging/appimage-prune.py")
+    assert "readelf" in src, "closure must read DT_NEEDED, not rely on ldd"
+    # The docstring explains why ldd is wrong here, so a bare substring check
+    # fails on the explanation. What must not come back is ldd being INVOKED.
+    assert '"ldd"' not in src and "'ldd'" not in src, (
+        "the closure is being computed by invoking ldd again")
+    assert "refusing to prune" in src, "no floor on the computed closure"
+
+
+def test_appimage_keeps_every_qt_module_the_app_imports():
+    """A pruned-away module is an ImportError at startup on the user's machine
+    and nowhere else. Pin the keep-list against what the source actually imports."""
+    import re as _re
+    prune = _read("packaging/appimage-prune.py")
+    keep = set(_re.search(r"KEEP_MODS\s*=\s*\{([^}]*)\}", prune).group(1).replace('"', '').replace("'", "").split(","))
+    keep = {k.strip() for k in keep if k.strip()}
+
+    used = set()
+    for rel in ("fifine_deck", ):
+        for dirpath, _, files in os.walk(os.path.join(ROOT, rel)):
+            if "backend" in dirpath:
+                continue
+            for f in files:
+                if not f.endswith(".py"):
+                    continue
+                with open(os.path.join(dirpath, f), encoding="utf-8") as fh:
+                    used |= set(_re.findall(r"PyQt6\.(Qt[A-Za-z]+)", fh.read()))
+    missing = used - keep
+    assert not missing, f"AppImage prunes modules the app imports: {sorted(missing)}"
+
+
+def test_appimage_is_documented():
+    doc = _read("docs/APPIMAGE.md")
+    assert "70-fifine-deck.rules" in doc, "the udev step is the one manual step"
+    assert "build-appimage.sh" in doc

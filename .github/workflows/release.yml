@@ -84,6 +84,15 @@ jobs:
           cp "dist/fifine-control-deck_${VERSION}_arm64.deb" dist/fifine-control-deck_arm64.deb
           ls -la dist/*.deb
 
+      # x86_64 only: python-appimage publishes no aarch64 manylinux base, and an
+      # AppImage is for distros without our .deb — those users are on x86_64.
+      - name: Build AppImage (x86_64)
+        run: |
+          ./packaging/build-appimage.sh "$VERSION"
+          cp "dist/fifine-control-deck-${VERSION}-x86_64.AppImage" \
+             dist/fifine-control-deck-x86_64.AppImage
+          ls -la dist/*.AppImage
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -93,5 +102,7 @@ jobs:
             "dist/fifine-control-deck_${VERSION}_arm64.deb" \
             "dist/fifine-control-deck_amd64.deb" \
             "dist/fifine-control-deck_arm64.deb" \
+            "dist/fifine-control-deck-${VERSION}-x86_64.AppImage" \
+            "dist/fifine-control-deck-x86_64.AppImage" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes

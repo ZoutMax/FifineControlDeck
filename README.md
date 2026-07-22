@@ -20,12 +20,17 @@ with profiles, multiple pages, a configuration GUI, and a system tray.
   (<https://launchpad.net/~zoutmax/+archive/ubuntu/fifine>)
 - **Direct download** (`.deb`, amd64/arm64):
   <https://github.com/ZoutMax/FifineControlDeck/releases/latest>
+- **AppImage** (any glibc distro — Fedora, Arch, openSUSE, SteamOS):
+  download `fifine-control-deck-x86_64.AppImage` from the same page, `chmod +x`,
+  run. Device access needs the udev rule installed once; see
+  [`docs/APPIMAGE.md`](docs/APPIMAGE.md).
 - **Source (GitHub):** <https://github.com/ZoutMax/FifineControlDeck>
   ([Releases](https://github.com/ZoutMax/FifineControlDeck/releases) ·
   [Issues](https://github.com/ZoutMax/FifineControlDeck/issues))
 - **Launchpad project:** <https://launchpad.net/fifine-control-deck> (hosts the PPA)
 
-Available for **amd64** and **arm64** via the PPA and `.deb`.
+Available for **amd64** and **arm64** via the PPA and `.deb`, and for
+**x86_64** as an AppImage on distros without apt.
 
 > **Store availability:** A Snap submission is on hold. The deck is driven
 > over `/dev/hidraw` with a vendor HID protocol, which strict snap
