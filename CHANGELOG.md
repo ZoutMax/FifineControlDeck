@@ -4,6 +4,22 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.11.3] - 2026-07-22
+
+No changes to the application itself: this release exists to publish the
+AppImage. `fifine_deck/` is byte-identical to 0.11.2.
+
+### Added
+- **An AppImage, for distros without apt.** Every previous install path built a
+  `.deb`, which left Fedora, Arch, openSUSE and SteamOS users with nothing. The
+  AppImage is a single 57 MB file that brings its own Python and Qt, so nothing
+  on your system needs to match. Download it, `chmod +x`, run it.
+
+  Device access still needs a udev rule installed once with root, which an
+  AppImage cannot do for you — the rule travels inside the file and
+  [`docs/APPIMAGE.md`](docs/APPIMAGE.md) has the two commands. Until it is
+  installed the app says so plainly rather than pretending to be connected.
+
 ## [0.11.2] - 2026-07-22
 
 Follow-up to 0.11.1, from a targeted re-audit and the first real soak test
