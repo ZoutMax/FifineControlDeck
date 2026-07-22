@@ -422,3 +422,25 @@ def test_a_good_config_load_is_quiet(tmp_path, caplog):
     with caplog.at_level(logging.WARNING, logger="fifine_deck.model"):
         DeckConfig.load(str(p))
     assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+
+def test_the_suite_never_sees_the_developers_real_home():
+    """Tripwire for the conftest sandbox.
+
+    The autostart CLI test read the REAL ~/.config/autostart entry, so the suite
+    was red on a machine where the user genuinely has autostart enabled, and
+    green under CI's scrubbed HOME. Redirecting only the model's config paths
+    was not enough — anything resolving a user path for itself escaped. If this
+    fails, that hole is back and some test is one accident away from reading, or
+    writing, real user data."""
+    import os
+    import pwd
+    from fifine_deck.app import autostart_file
+    # pwd, not expanduser("~"): expanduser reads $HOME, which the fixture has
+    # already redirected, so it would compare the sandbox against itself and
+    # pass no matter what. The passwd entry is the real home regardless.
+    real = pwd.getpwuid(os.getuid()).pw_dir
+    assert os.environ.get("HOME") != real, "HOME is not sandboxed"
+    for p in (os.environ.get("XDG_CONFIG_HOME", ""), autostart_file()):
+        assert p, "path resolved to nothing"
+        assert not p.startswith(real + "/"), f"{p} escapes the sandbox into the real home"

@@ -22,6 +22,23 @@ def qapp():
 
 @pytest.fixture(autouse=True)
 def _isolate_config(tmp_path, monkeypatch):
+    # HOME and XDG_CONFIG_HOME first. Redirecting the model's paths alone left a
+    # hole: anything that resolves a user path for itself — autostart_file() is
+    # $XDG_CONFIG_HOME/autostart, and app.py's runtime and lock paths — still
+    # read the developer's real home. Not hypothetical: the autostart CLI test
+    # stat'd the real ~/.config/autostart entry, so the suite was RED on a
+    # machine where the user genuinely has autostart enabled and green
+    # everywhere else. It hid for hours because CI runs under a scrubbed HOME
+    # and the local runs happened to set XDG_CONFIG_HOME — two different
+    # accidents masking the same hole.
+    #
+    # Per-test isolation cannot fix this class: it only protects the tests
+    # someone remembered to protect. Do it here, once, for everything.
+    home = tmp_path / "home"
+    (home / ".config").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+
     from fifine_deck import model
     cfgdir = tmp_path / "cfg"
     monkeypatch.setattr(model, "CONFIG_DIR", str(cfgdir))
