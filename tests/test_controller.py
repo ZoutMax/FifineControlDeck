@@ -47,8 +47,16 @@ class MockDevice:
     def set_key_callback(self, cb):
         self.callback = cb
 
+    # write_result mirrors the real transport's contract, which the monitor
+    # path now acts on rather than merely logging: set_key_image_stream returns
+    # the C call's result on success and None when there is no handle, because
+    # it returns early and writes nothing. Returning None unconditionally, as
+    # this used to, made every test render look like a write to a dead device.
+    write_result = 0
+
     def set_key_image_pil(self, index, img):
         self.key_images[index] = img
+        return self.write_result
 
     def set_key_gif(self, index, path):
         self.key_images[index] = ("gif", path)

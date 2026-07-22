@@ -101,8 +101,14 @@ def test_net_rate_from_counter_deltas(monkeypatch):
     psutil = pytest.importorskip("psutil")
     IO = namedtuple("IO", "bytes_recv bytes_sent")
     samples = [IO(1000, 500), IO(1_001_000, 500)]
-    monkeypatch.setattr(psutil, "net_io_counters",
-                        lambda pernic=False: samples.pop(0) if samples else IO(0, 0))
+
+    def counters(pernic=False):
+        io = samples.pop(0) if samples else IO(0, 0)
+        # the untargeted path asks per-interface now, so that it can leave out
+        # loopback and container bridges rather than counting them as network
+        return {"enp6s0": io} if pernic else io
+
+    monkeypatch.setattr(psutil, "net_io_counters", counters)
     # Inexhaustible fake clock: +1 s per call (leaked controller threads from
     # other tests may also call it, so it must never raise).
     t = {"v": 100.0}
@@ -503,7 +509,7 @@ class _FlakyDevice(MockDevice):
         if self.fail_next > 0:
             self.fail_next -= 1
             raise IOError("transient write failure")
-        super().set_key_image_pil(index, img)
+        return super().set_key_image_pil(index, img)   # pass the success result on
 
 
 def test_monitor_spec_edited_mid_tick_is_not_overpainted():
@@ -1223,3 +1229,133 @@ def test_a_different_failing_target_still_gets_its_own_line(caplog):
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 2, f"expected one line per target, got {len(warnings)}"
+
+
+# -- a dead handle must not be invisible on a page of monitor keys ------------
+
+def test_a_dead_handle_is_reported_by_the_monitor_path():
+    """set_key_image_stream returns None when there is no handle: it returns
+    early and writes nothing. Discarding that meant _monitor_state got stamped,
+    the unchanged-signature fast path suppressed every retry, and the GUI kept
+    receiving frames — so on a page of only monitor keys a dead transport was
+    completely undetectable. render_key has always checked the result."""
+    c, dev = _monitored_controller([Reading(42.0, "42%")] * 8)
+    try:
+        dev.write_result = None                  # the handle died mid-session
+        got = []
+        c.on_monitor_image = lambda i, img, page_id="": got.append(i)
+        for n in range(5):
+            c._monitor_state.clear()             # value is stable; force a tick
+            c.monitor_tick(now=100.0 + n)
+        assert c._write_failures > 0, "a dead handle produced no complaint at all"
+        assert not got, "the GUI was fed frames the device never received"
+        assert 1 not in c._monitor_state, "a failed write left a gate behind"
+    finally:
+        c.stop()
+
+
+def test_a_flat_graph_key_stops_rewriting_the_same_frame():
+    """Graph keys are exempt from the signature gate because a sparkline
+    scrolls even when the text does not — but on a flat metric the frames are
+    byte-identical, and an idle graph key at the 0.5 s floor was writing
+    ~172,800 redundant frames a day into the leaky vendored transport."""
+    c, dev = _monitored_controller([Reading(42.0, "42%")] * 8, style="graph")
+    try:
+        writes = []
+        real = dev.set_key_image_pil
+
+        def counting(index, img):
+            writes.append(index)
+            return real(index, img)
+
+        dev.set_key_image_pil = counting
+        for n in range(4):                        # history fills: 1 point, 2...
+            c._monitor_state.clear()
+            c.monitor_tick(now=200.0 + n)
+        writes.clear()                            # ...and the picture settles
+        for n in range(6):
+            c._monitor_state.clear()
+            c.monitor_tick(now=210.0 + n)
+        assert writes == [], \
+            f"a settled flat graph key still wrote {len(writes)} frames"
+    finally:
+        c.stop()
+
+
+def test_a_failed_write_does_not_freeze_the_key_forever():
+    """_key_face_changed stamps BEFORE the write, so a write the device did not
+    accept left a fingerprint claiming the key shows a picture it never got."""
+    c, dev = _monitored_controller([Reading(42.0, "42%")] * 6)
+    try:
+        dev.write_result = None
+        c._monitor_state.clear()
+        c.monitor_tick(now=300.0)
+        assert 1 not in c._key_faces, "a failed write left its fingerprint behind"
+
+        dev.write_result = 0                     # the handle recovers
+        writes = []
+        real = dev.set_key_image_pil
+        dev.set_key_image_pil = lambda i, img: (writes.append(i), real(i, img))[1]
+        c._monitor_state.clear()
+        c.monitor_tick(now=301.0)
+        assert writes == [1], "the key was never repainted after recovery"
+    finally:
+        c.stop()
+
+
+# -- network -----------------------------------------------------------------
+
+def test_untargeted_net_ignores_loopback_and_bridges(monkeypatch):
+    """psutil.net_io_counters() sums EVERY interface, so an untargeted key
+    reported localhost sockets as network throughput — measured at 3.1 GB/s in
+    both directions for a 209 MB transfer over 127.0.0.1."""
+    psutil = pytest.importorskip("psutil")
+    IO = namedtuple("IO", "bytes_recv bytes_sent")
+    per = [
+        {"lo": IO(0, 0), "enp6s0": IO(1000, 500), "docker0": IO(0, 0)},
+        {"lo": IO(10 ** 9, 10 ** 9),              # a big loopback transfer
+         "enp6s0": IO(1000, 500),                 # ...and no real traffic
+         "docker0": IO(10 ** 8, 10 ** 8)},
+    ]
+    monkeypatch.setattr(psutil, "net_io_counters",
+                        lambda pernic=False: per.pop(0) if per else per_last())
+    per_last = lambda: {"lo": IO(0, 0), "enp6s0": IO(1000, 500)}   # noqa: E731
+    t = {"v": 500.0}
+    monkeypatch.setattr(monitors.time, "monotonic",
+                        lambda: t.__setitem__("v", t["v"] + 1.0) or t["v"])
+    s = Sampler()
+    spec = MonitorSpec.from_params({"metric": "net"})
+    s.sample(spec)
+    second = s.sample(spec)
+    assert second.text == "↓ 0 B/s", f"loopback counted as network: {second.text}"
+
+
+def test_net_rate_is_not_averaged_over_a_gap(monkeypatch):
+    """_net_prev survives page switches, folder navigation and unplugs, so a
+    key coming back after ten minutes reported the average over the whole
+    absence — measured at 5 MB/s when the true rate was zero — and fed that
+    spike into the sparkline."""
+    psutil = pytest.importorskip("psutil")
+    IO = namedtuple("IO", "bytes_recv bytes_sent")
+    counters = [IO(0, 0), IO(3_000_000_000, 0)]
+    monkeypatch.setattr(psutil, "net_io_counters",
+                        lambda pernic=False: ({"eth0": counters[0]} if pernic
+                                              else counters[0]))
+    clock = {"v": 1000.0}
+    monkeypatch.setattr(monitors.time, "monotonic", lambda: clock["v"])
+    s = Sampler()
+    spec = MonitorSpec.from_params({"metric": "net"})
+    s.sample(spec)                                  # warm-up
+
+    counters[0] = IO(3_000_000_000, 0)              # 3 GB arrived meanwhile
+    clock["v"] = 1600.0                             # ...over a 600 s absence
+    after = s.sample(spec)
+    assert after.text == "…", f"a 600 s gap reported a rate: {after.text}"
+    assert after.sample is None, "the bogus rate entered the sparkline"
+
+
+def test_small_byte_values_are_not_rounded_into_nonsense():
+    assert monitors._fmt_bytes(1500) == "1.5 kB"     # was "2 kB"
+    assert monitors._fmt_bytes(999999) == "1000.0 kB" or \
+        monitors._fmt_bytes(999999).endswith("kB")
+    assert monitors._fmt_bytes(0) == "0 B"

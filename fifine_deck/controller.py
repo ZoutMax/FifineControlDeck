@@ -464,7 +464,13 @@ class DeckController:
                         img = rendering.render_key(
                             dev.KEY_PIXEL_WIDTH, kc.label, kc.icon, kc.bg_color, kc.text_color)
                     if self._key_face_changed(index, img):
-                        self._note_write_result(dev.set_key_image_pil(index, img), index)
+                        res = dev.set_key_image_pil(index, img)
+                        self._note_write_result(res, index)
+                        if res is None or (isinstance(res, int) and res < 0):
+                            # Same optimistic-stamp problem as the monitor path:
+                            # without this, one write the device did not accept
+                            # left the key frozen until its picture changed.
+                            self._forget_key_face(index)
                 self._sync_gif_loop()
             except Exception as e:
                 log.error("render key %s failed: %s", index, e)
@@ -496,6 +502,17 @@ class DeckController:
             return False
         self._key_faces[index] = sig
         return True
+
+    def _forget_key_face(self, index: int) -> None:
+        """Drop ONE key's fingerprint, after a write that did not land.
+
+        _key_face_changed stamps before the write, because it is asked whether
+        to write at all. When the write then fails, the stamp is a lie: the key
+        is not showing that picture, and the next identical render would skip
+        it — so a transient USB hiccup froze the key until its content happened
+        to change.
+        """
+        self._key_faces.pop(index, None)
 
     def _forget_key_faces(self) -> None:
         """Drop the fingerprints, so the next render really writes.
@@ -721,10 +738,45 @@ class DeckController:
                         ok = True
                         if dev and index not in self._gif_keys:
                             try:
-                                dev.set_key_image_pil(index, img)
-                                pushed = True
+                                # The RESULT matters, not just the absence of
+                                # an exception: set_key_image_stream returns
+                                # None when the transport has no handle (it
+                                # returns early and writes nothing) and a
+                                # negative int on a C error. Discarding it here
+                                # meant a dead handle stamped _monitor_state,
+                                # the unchanged-signature fast path then
+                                # suppressed every retry, and the GUI kept
+                                # getting frames — so on a page of monitor keys
+                                # a dead transport was undetectable, which is
+                                # exactly the divergence the comment below
+                                # forbids. render_key has always checked this.
+                                if self._key_face_changed(index, img):
+                                    res = dev.set_key_image_pil(index, img)
+                                    self._note_write_result(res, index)
+                                    ok = not (res is None
+                                              or (isinstance(res, int) and res < 0))
+                                    if ok:
+                                        pushed = True
+                                    else:
+                                        # The fingerprint is stamped BEFORE the
+                                        # write, so leaving it would convince
+                                        # the next identical render that the
+                                        # key already shows this — and the
+                                        # retry the failure path below arranges
+                                        # would write nothing.
+                                        self._forget_key_face(index)
+                                # else: byte-identical to what the key already
+                                # shows. Graph keys are exempt from the
+                                # signature gate above because a sparkline
+                                # scrolls even when the text does not — but on
+                                # a flat metric the frames really are identical,
+                                # and an idle graph key at the 0.5 s floor was
+                                # writing ~172,800 redundant frames a day into
+                                # the transport whose leak _key_face_changed
+                                # exists to throttle.
                             except Exception as e:
                                 ok = False
+                                self._forget_key_face(index)
                                 log.error("monitor key %s failed: %s", index, e)
                         if ok:
                             # Stamp only AFTER the write succeeded (or no

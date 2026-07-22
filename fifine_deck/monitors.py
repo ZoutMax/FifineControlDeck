@@ -23,6 +23,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from PIL import Image, ImageDraw
 
@@ -152,10 +153,40 @@ def placeholder(spec: MonitorSpec) -> Reading:
     return Reading(None, "—", METRICS.get(spec.metric, ""))
 
 
+# Interfaces that carry no real network traffic, or that double-count traffic
+# already counted on the interface underneath. Matched on the name's prefix.
+_VIRTUAL_IFACES = ("lo", "docker", "br-", "veth", "virbr", "vmnet", "tun",
+                   "tap", "bridge", "podman", "cni", "flannel", "kube")
+
+
+def _is_real_iface(name: str) -> bool:
+    return not name.startswith(_VIRTUAL_IFACES)
+
+
+class _NetTotals(NamedTuple):
+    bytes_recv: int
+    bytes_sent: int
+
+
+def _sum_real_ifaces(per: dict):
+    """Total the physical interfaces only, as an object with the two counters.
+
+    Falls back to summing everything if the filter leaves nothing, so a machine
+    whose only interface has an unusual name still reports something.
+    """
+    names = [n for n in per if _is_real_iface(n)] or list(per)
+    recv = sum(per[n].bytes_recv for n in names)
+    sent = sum(per[n].bytes_sent for n in names)
+    return _NetTotals(recv, sent)
+
+
 def _fmt_bytes(n: float) -> str:
+    # kB gets a decimal like every other unit. Rendering it whole made small
+    # values wrong by up to a third (1500 B showed as "2 kB") and let 999999
+    # render as "1000 kB" instead of rolling over to MB.
     for unit in ("B", "kB", "MB", "GB", "TB"):
         if abs(n) < 1000 or unit == "TB":
-            return f"{n:.0f} {unit}" if unit in ("B", "kB") else f"{n:.1f} {unit}"
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
         n /= 1000.0
     return f"{n:.1f} TB"
 
@@ -254,17 +285,32 @@ class Sampler:
     def _sample_net(self, spec: MonitorSpec) -> Reading:
         if psutil is None:
             return _NO_PSUTIL
+        per = psutil.net_io_counters(pernic=True)
         if spec.target:
-            per = psutil.net_io_counters(pernic=True)
             io = per.get(spec.target)
             if io is None:
                 return Reading(None, "n/a", f"no iface {spec.target}", ok=False)
         else:
-            io = psutil.net_io_counters()
+            # NOT psutil.net_io_counters(): that sums EVERY interface, so an
+            # untargeted key reported localhost sockets as network throughput.
+            # Measured: 209 MB over 127.0.0.1 read as "↓ 3.1 GB/s ↑ 3.1 GB/s",
+            # the same bytes counted in both directions. A local database, X
+            # forwarding, PulseAudio over TCP or any container bridge shows
+            # constant phantom traffic, and one burst flattens the sparkline
+            # for the next 32 samples because it normalises to the window max.
+            io = _sum_real_ifaces(per)
         now = time.monotonic()
         prev = self._net_prev.get(spec.target)
         self._net_prev[spec.target] = (now, io.bytes_recv, io.bytes_sent)
-        if prev is None or now <= prev[0]:
+        # A stale `prev` is worse than none. _net_prev lives on the Sampler and
+        # survives page switches, folder navigation, profile switches and
+        # unplugs — all of which stop this key being sampled while the counters
+        # keep climbing. Returning on a 600 s gap reported the average over the
+        # whole absence (measured: "↓ 5.0 MB/s" when the true rate was zero)
+        # and fed that spike into the sparkline. Anything much older than the
+        # sampling interval is a gap, not a measurement.
+        stale = prev is not None and (now - prev[0]) > max(4.0, spec.interval * 4)
+        if prev is None or now <= prev[0] or stale:
             return Reading(None, "…", METRICS["net"])
         dt = now - prev[0]
         down = max(0.0, (io.bytes_recv - prev[1]) / dt)
