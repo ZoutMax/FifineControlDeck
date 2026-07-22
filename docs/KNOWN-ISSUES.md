@@ -1,8 +1,17 @@
 # Known issues
 
-Open defects carried forward from the pre-0.10.0 audits. Everything here was
-found by reading the code and, where noted, reproducing the behaviour. Entries
-marked **FIXED** carry a note saying how; the rest are open.
+Defects carried forward from the pre-0.10.0 audits. Everything here was found by
+reading the code and, where noted, reproducing the behaviour. Entries marked
+**FIXED** carry a note saying how; the rest are open.
+
+**As of 0.11.3 every behavioural defect on this page is closed.** What is left is
+two properties of the same file, the prebuilt vendored `libtransport.so`, and
+neither can be changed without the vendor's source: the 2.001 s that
+`transport_destroy` spends before returning (issue 9, mitigated so it is no
+longer visible), and the `lintian` unstripped-binary warning. The fix notes are
+kept rather than deleted, because several of these bugs were subtle enough that
+the record of *why* the code looks the way it does is worth more than a shorter
+file.
 
 Line numbers are **as of v0.10.0** (commit `aacf2eb`) and have shifted in files
 touched since. Treat them as a pointer, not an address.
@@ -375,7 +384,20 @@ round trip and Qt teardown carry the rest and have not been attributed.
 
 ## Application layer
 
-### Typing does nothing, silently, when no keystroke tool is installed
+**Status:** all four are fixed, in 0.11.0 and 0.11.2. Nothing in the application
+layer is outstanding. Each entry keeps its original text underneath the fix note,
+because the failure mode is the interesting part: every one of these was a
+*silent* failure, where the app did nothing and said nothing, and the user had no
+way to tell a broken key from an unbound one.
+
+### 1. Typing does nothing, silently, when no keystroke tool is installed — **FIXED**
+
+> Fixed in 0.11.0. `_type_text` now logs
+> `no keystroke tool (install xdotool / ydotool / wtype); nothing was typed`,
+> matching what `_send_hotkey` already did.
+
+The original problem, for reference:
+
 
 `actions.py:296-298`
 
@@ -384,7 +406,14 @@ parallel `_send_hotkey` path logs `no keystroke tool (install xdotool / ydotool 
 wtype)`. A "Type text" or "Type password" key on a box without any of those does
 nothing at all, with no log line and no GUI feedback.
 
-### A locked keyring types an empty password with no indication
+### 2. A locked keyring types an empty password with no indication — **FIXED**
+
+> Fixed in 0.11.0. A password key that resolves to nothing now says so — naming
+> the `secret_id`, pointing at the locked login keyring, and stating that nothing
+> was typed — instead of typing an empty string and looking dead.
+
+The original problem, for reference:
+
 
 `actions.py:382-386`, `secret_store.py:60-62`
 
@@ -393,7 +422,23 @@ locked", and the warning only fires for a raised error, not a `None` return. Wit
 the login keyring locked, pressing the key types an empty string and the user is
 never told the secret was unavailable.
 
-### Config export writes a plaintext password with no warning
+### 3. Config export writes a plaintext password with no warning — **FIXED**
+
+> Fixed in 0.11.0, and the scan itself corrected in 0.11.2. Export now walks
+> profiles, pages, nested folders, hold actions and knob slots, and warns before
+> writing if any action carries a literal password.
+>
+> The 0.11.2 half is the instructive one. The first version of the scan read
+> `step["params"]` directly, but `_StepRow.value()` writes
+> `{"action": {...}, "delay": N}` — so a password nested inside a Multi-action
+> was invisible to it, and the warning silently did not fire for exactly the
+> case it was written for. Worse, the *test* built its fixture in the same
+> wrong shape, so it passed and certified the broken path. `step_has` now
+> mirrors the executor's `step.get("action", step)` unwrapping so the producer
+> and the scanner cannot drift apart again.
+
+The original problem, for reference:
+
 
 `widgets.py:542`, `main_window.py:123-142`
 
@@ -403,7 +448,16 @@ secret in the clear. The export is `0600`, which protects other local users, but
 the whole point of an export is to move it to another machine or a backup, where
 that mode does not follow it. No warning is shown at export time.
 
-### `--enable-autostart` can report success without changing anything
+### 4. `--enable-autostart` can report success without changing anything — **FIXED**
+
+> Fixed in 0.11.0. The delegated path calls a new `MainWindow.apply_autostart()`
+> rather than `setChecked()`: it writes or removes the file first, then makes the
+> menu item reflect what is actually on disk, and returns whether the requested
+> state was reached. The CLI polls for that state and prints a warning instead of
+> success if it never arrives.
+
+The original problem, for reference:
+
 
 `app.py:354-363`, `main_window.py:103`
 
@@ -445,9 +499,27 @@ roughly eighteen commits behind — removed.
 
 ## Verification status
 
-Items 1-8 were each read out of the source and reasoned through, and several
-were checked against the live process's open file descriptors and threads. They
-have **not** been reproduced against physical hardware, because doing so means
-deliberately provoking disconnects and use-after-free on a real device. Confirm
-each on hardware before writing a fix, and treat the severity ordering here as a
-starting point rather than a measurement.
+Superseded, and kept because the caveat it raised turned out to matter.
+
+It originally read: items 1-8 were read out of the source and reasoned through,
+several were checked against the live process's file descriptors and threads, but
+none had been **reproduced against physical hardware** — so the severity ordering
+was a reading, not a measurement.
+
+That caution was justified twice over. Issue 9's stated cause was **wrong** when
+first written: `clearAllIcon()` was blamed for the 2 s shutdown and measures
+0.000 s. And issue 1's real mechanism — devtmpfs recreating `/dev/hidrawN` with a
+new inode, so the path is a lying identity — could not be seen by reading at all;
+it took a physical replug on the user's deck, which moved the node from inode
+12769 to 14541.
+
+Where things stand now: every device-layer fix has been exercised against the
+real deck (`3142:0060`, `fw V3.D6.1.009`, 15 keys), including a fast replug, quit
+timing measured phase by phase, and a 600-page-switch memory soak. Application
+layer items are covered by the automated suite. The one item nobody can close
+here is the 2.001 s inside the vendored `libtransport.so`, which needs the
+vendor's source.
+
+The rule that came out of this: **a fix is not verified until it has been run in
+the state it claims to repair.** Reading proves a mechanism is plausible. Only
+running it proves which mechanism is real.
