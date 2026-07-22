@@ -1354,11 +1354,16 @@ def test_net_rate_is_not_averaged_over_a_gap(monkeypatch):
     assert after.sample is None, "the bogus rate entered the sparkline"
 
 
-def test_small_byte_values_are_not_rounded_into_nonsense():
-    assert monitors._fmt_bytes(1500) == "1.5 kB"     # was "2 kB"
-    assert monitors._fmt_bytes(999999) == "1000.0 kB" or \
-        monitors._fmt_bytes(999999).endswith("kB")
+def test_fmt_bytes_rolls_over_and_keeps_kb_narrow():
+    # kB is whole (narrow, for the net key's value font); MB+ get a decimal.
+    assert monitors._fmt_bytes(1500) == "2 kB"
+    assert monitors._fmt_bytes(1000) == "1 kB"
     assert monitors._fmt_bytes(0) == "0 B"
+    assert monitors._fmt_bytes(999) == "999 B"
+    # the rollover that 0.12.0's comment claimed but did not deliver
+    assert monitors._fmt_bytes(999999) == "1.0 MB"
+    assert monitors._fmt_bytes(1_000_000) == "1.0 MB"
+    assert monitors._fmt_bytes(999_999_999) == "1.0 GB"
 
 
 def test_a_gpu_backend_that_reads_badly_gives_up_eventually(monkeypatch):
@@ -1414,3 +1419,92 @@ def test_the_sparkline_leaves_gaps_where_samples_are_missing():
     # a single point either side of a gap is not a line, and must not crash
     render_monitor(100, spec, Reading(None, "…"), [10.0, None, 90.0])
     render_monitor(100, spec, Reading(None, "…"), [None] * 32)
+
+
+def test_a_gpu_backend_recovers_after_isolated_read_blips(monkeypatch):
+    """0.12.0 regression: the read-failure counter never reset on success, so
+    20 blips ANYWHERE in the process lifetime pinned the key to n/a forever.
+    0.11.3 recovered indefinitely. It must count CONSECUTIVE failures."""
+    state = {"fail": False}
+
+    class _Backend:
+        def read(self):
+            if state["fail"]:
+                raise RuntimeError("EIO")
+            return 42
+
+    def probe(final=False):
+        return ("amdgpu", _Backend())
+
+    monkeypatch.setattr(monitors, "_probe_vram", probe)
+    s = Sampler()
+    spec = MonitorSpec.from_params({"metric": "vram"})
+
+    # patch _sample_vram's read to go through our backend object
+    def fake_read(self, spec):
+        b = self._resolve_gpu_backend("_vram_backend", monitors._probe_vram,
+                                      "_vram_retries")
+        if b[0] not in ("nvml", "amdgpu"):
+            return Reading(None, "n/a", "no dedicated GPU", ok=False)
+        try:
+            v = b[1].read()
+        except Exception:
+            self._gpu_read_failed("_vram_backend", "_vram_retries")
+            raise
+        self._gpu_read_ok("_vram_backend")
+        return Reading(float(v), f"{v}%", "", sample=float(v))
+
+    monkeypatch.setattr(Sampler, "_sample_vram", fake_read)
+
+    # 30 isolated blips, each fully recovered afterwards
+    for cycle in range(30):
+        state["fail"] = True
+        s.sample(spec)                       # one failure -> backend dropped
+        state["fail"] = False
+        r = s.sample(spec)                   # must recover
+        assert r.ok and r.pct == 42.0, f"did not recover on cycle {cycle}: {r.text}"
+    assert s._vram_backend != ("none",), "the key was permanently killed"
+
+
+def test_a_gpu_backend_still_settles_on_consecutive_failures(monkeypatch):
+    """The genuinely-stuck case (NVML after a Xid error) must still give up,
+    so it does not re-probe forever leaking init refcounts."""
+    class _Dead:
+        def read(self):
+            raise RuntimeError("GPU is lost")
+
+    monkeypatch.setattr(monitors, "_probe_vram", lambda final=False: ("amdgpu", _Dead()))
+
+    def fake_read(self, spec):
+        b = self._resolve_gpu_backend("_vram_backend", monitors._probe_vram, "_vram_retries")
+        if b[0] not in ("nvml", "amdgpu"):
+            return Reading(None, "n/a", "gone", ok=False)
+        try:
+            b[1].read()
+        except Exception:
+            self._gpu_read_failed("_vram_backend", "_vram_retries")
+            raise
+        return Reading(1.0, "1%")
+
+    monkeypatch.setattr(Sampler, "_sample_vram", fake_read)
+    s = Sampler()
+    spec = MonitorSpec.from_params({"metric": "vram"})
+    for _ in range(25):
+        try:
+            s.sample(spec)
+        except Exception:
+            pass
+    assert s._vram_backend == ("none",), "never settled on 20 consecutive failures"
+
+
+def test_a_flaky_alternating_sensor_still_draws_something():
+    """0.12.0 regression: run-splitting kept only runs of length > 1, so a
+    history where no two good samples are adjacent (a sensor that reports on
+    alternate ticks) drew an empty box. Isolated points are now dots."""
+    from PIL import Image, ImageChops
+    spec = MonitorSpec.from_params({"metric": "temp", "style": "graph"})
+    alt = [50.0, None] * 16                       # no two non-None adjacent
+    img = render_monitor(100, spec, Reading(50.0, "50°C"), alt)
+    blank = render_monitor(100, spec, Reading(50.0, "50°C"), [None] * 32)
+    assert ImageChops.difference(img.convert("RGB"), blank.convert("RGB")).getbbox() \
+        is not None, "a flaky sensor rendered an empty graph"

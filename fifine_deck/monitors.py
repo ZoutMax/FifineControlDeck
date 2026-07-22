@@ -185,12 +185,21 @@ def _sum_real_ifaces(per: dict):
 
 
 def _fmt_bytes(n: float) -> str:
-    # kB gets a decimal like every other unit. Rendering it whole made small
-    # values wrong by up to a third (1500 B showed as "2 kB") and let 999999
-    # render as "1000 kB" instead of rolling over to MB.
+    # B and kB render whole, MB+ get one decimal — as they did before 0.12.0.
+    # 0.12.0 gave kB a decimal too, which widened every kB-range network
+    # reading by two characters and shrank the net key's value font from 20 px
+    # to 16 px at arm's length; the accuracy it bought (1500 as "2 kB" vs
+    # "1.5 kB") is not worth that on a small LCD.
+    #
+    # Roll over on the ROUNDED value, so 999999 shows "1.0 MB" rather than
+    # "1000.0 kB": 999.999 is < 1000 but rounds up to 1000 at the display
+    # precision. (0.12.0's comment claimed to fix this and did not; the bug
+    # was in 0.11.3 too.)
+    n = float(n)
     for unit in ("B", "kB", "MB", "GB", "TB"):
-        if abs(n) < 1000 or unit == "TB":
-            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        prec = 0 if unit in ("B", "kB") else 1
+        if round(abs(n), prec) < 1000 or unit == "TB":
+            return f"{n:.{prec}f} {unit}"
         n /= 1000.0
     return f"{n:.1f} TB"
 
@@ -402,6 +411,13 @@ class Sampler:
         # zeroes that one on every successful probe, and here the probe keeps
         # succeeding — so sharing it would reset the budget on every lap of the
         # very loop this exists to break.
+        #
+        # CONSECUTIVE, not cumulative: _gpu_read_ok clears this on every good
+        # read. Without that clear the count only ever rose, so twenty blips
+        # spread across the whole session — one a day on a hybrid laptop whose
+        # dGPU runtime-suspends, or a GPU reset — permanently killed the key
+        # until restart, where 0.11.3 recovered every time. Twenty in a row is
+        # the genuinely-stuck NVML-after-Xid case this is meant to catch.
         n = self._read_failures.get(attr, 0) + 1
         self._read_failures[attr] = n
         if n >= 20:
@@ -411,6 +427,10 @@ class Sampler:
             setattr(self, attr, ("none",))
         else:
             setattr(self, attr, None)
+
+    def _gpu_read_ok(self, attr: str) -> None:
+        """A read landed, so the consecutive-failure budget starts over."""
+        self._read_failures.pop(attr, None)
 
     @staticmethod
     def _release_nvml(backend) -> None:
@@ -445,6 +465,7 @@ class Sampler:
             # warning every interval forever.
             self._gpu_read_failed("_vram_backend", "_vram_retries")
             raise
+        self._gpu_read_ok("_vram_backend")
         pct = 100.0 * used / total if total else 0.0
         return Reading(pct, f"{pct:.0f}%",
                        f"{_fmt_bytes(used)} / {_fmt_bytes(total)}", sample=pct)
@@ -464,6 +485,7 @@ class Sampler:
             # backend died (driver unload / hot-remove): re-probe next sample
             self._gpu_read_failed("_gpu_backend", "_gpu_retries")
             raise
+        self._gpu_read_ok("_gpu_backend")
         return Reading(pct, f"{pct:.0f}%", "load", sample=pct)
 
     def _sample_gputemp(self, spec: MonitorSpec) -> Reading:
@@ -487,6 +509,7 @@ class Sampler:
         except Exception:
             self._gpu_read_failed("_gputemp_backend", "_gputemp_retries")
             raise
+        self._gpu_read_ok("_gputemp_backend")
         pct = max(0.0, min(100.0, val))
         return Reading(pct, f"{val:.0f}°C", label, sample=val)
 
@@ -785,17 +808,25 @@ def _draw_graph(draw, size: int, history: list[float | None], is_percent: bool,
     current: list[tuple[int, int]] = []
     for i, v in enumerate(history):
         if v is None:
-            if len(current) > 1:
+            if current:
                 runs.append(current)
             current = []
             continue
         x = left + int(w * i / n)
         y = bottom - int(h * max(0.0, min(1.0, v / scale)))
         current.append((x, y))
-    if len(current) > 1:
+    if current:
         runs.append(current)
-    # soft fill under each unbroken run, then the line itself
+    # soft fill under each unbroken run, then the line itself. A run of a
+    # single point — a good sample between two gaps, e.g. a sensor that
+    # reports on alternate ticks — is drawn as a dot rather than dropped;
+    # dropping it left the whole sparkline blank when no two samples were
+    # ever adjacent.
     for xy in runs:
+        if len(xy) == 1:
+            x, y = xy[0]
+            draw.ellipse((x - 1, y - 1, x + 1, y + 1), fill=accent)
+            continue
         poly = xy + [(xy[-1][0], bottom), (xy[0][0], bottom)]
         draw.polygon(poly, fill=_mix(grid, accent, 0.35))
         draw.line(xy, fill=accent, width=2)

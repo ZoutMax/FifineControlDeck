@@ -109,6 +109,10 @@ for _v in PYTHONHOME PYTHONPATH PYTHONDONTWRITEBYTECODE LD_LIBRARY_PATH LD_PRELO
     if [ -n "\${!_v+x}" ]; then export "FIFINE_HOST_\${_v}=\${!_v}"; fi
 done
 unset _v
+# Explicit, unambiguous "this app is running from its bundle" marker, so
+# actions.child_env() strips our vars from launched programs here and NOWHERE
+# else. APPDIR alone is too generic to key on. See child_env().
+export FIFINE_IN_BUNDLE=1
 PYHOME="\${APPDIR}/opt/python${PY_VER}"
 export PYTHONHOME="\${PYHOME}"
 export PYTHONDONTWRITEBYTECODE=1

@@ -204,19 +204,31 @@ def child_env() -> dict:
 
     Our launchers stash whatever the host had in FIFINE_HOST_<VAR> before
     overwriting it, so the honest fix is to put those values back. When there
-    is no stash and we can see we are inside a bundle (APPDIR from AppRun,
-    SNAP from snapd), the variable is ours alone and is dropped entirely.
+    is no stash and we are inside OUR bundle, the variable is ours alone and is
+    dropped entirely.
 
-    Outside a bundle nothing matches and the environment passes through
+    "Our bundle" is signalled by FIFINE_IN_BUNDLE=1, which only our AppRun and
+    snap launcher set — NOT by APPDIR or SNAP. Those are too generic: APPDIR is
+    exported by any AppImage and by assorted build tooling, and SNAP leaks into
+    anything spawned from inside a snap, so keying on them meant a plain
+    .deb/PPA/source app whose environment happened to carry one would strip
+    PYTHONPATH/LD_LIBRARY_PATH from every program a key launched — the opposite
+    of the passthrough this promises. Older bundles (0.12.0/0.12.1) predate the
+    marker but DO write the FIFINE_HOST_* stashes, so their real bundle vars are
+    still restored; only a bundle var the host never set is missed there, which
+    is the same "drop it" outcome by a longer road.
+
+    Outside our bundle nothing matches and the environment passes through
     untouched, so .deb, PPA and source installs are unaffected.
     """
     env = dict(os.environ)
-    bundled = bool(env.get("APPDIR") or env.get("SNAP"))
+    in_bundle = env.get("FIFINE_IN_BUNDLE") == "1"
+    env.pop("FIFINE_IN_BUNDLE", None)      # never hand this marker to a child
     for var in _BUNDLE_ENV_VARS:
         saved = env.pop("FIFINE_HOST_" + var, None)
         if saved is not None:
             env[var] = saved
-        elif bundled:
+        elif in_bundle:
             env.pop(var, None)
     return env
 
@@ -398,8 +410,10 @@ def _volume(cmd: str, step: str) -> None:
     # The GUI's "Step %" is free text. A negative one built "-20%+", which
     # wpctl's option parser reads as a flag rather than a value: stderr goes to
     # DEVNULL, so the key just did nothing. Clamp to a range that can only ever
-    # be an argument.
-    pct = max(1, min(100, abs(pct)))
+    # be an argument. Floor at 0, NOT 1: a step of "0" is a deliberate no-op
+    # (as it was before 0.12.0), and raising it to 1 turned every press of a
+    # zero-step key into a real 1% nudge.
+    pct = max(0, min(100, abs(pct)))
     if AUDIO == "pipewire":
         if cmd == "up":
             _run(["wpctl", "set-volume", "-l", "1.5", SINK, f"{pct}%+"])

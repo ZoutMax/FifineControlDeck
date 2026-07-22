@@ -276,7 +276,7 @@ def test_multi_bad_step_does_not_abort_remaining_steps(rec, monkeypatch):
 # running a line.
 
 def test_child_env_drops_our_bundle_vars(monkeypatch):
-    monkeypatch.setenv("APPDIR", "/bundle")             # set by AppRun
+    monkeypatch.setenv("FIFINE_IN_BUNDLE", "1")         # set by AppRun / snap
     monkeypatch.setenv("PYTHONHOME", "/bundle/opt/python3.12")
     monkeypatch.setenv("QT_PLUGIN_PATH", "/bundle/qt/plugins")
     env = actions.child_env()
@@ -287,7 +287,7 @@ def test_child_env_drops_our_bundle_vars(monkeypatch):
 def test_child_env_restores_the_hosts_own_value(monkeypatch):
     """A stashed FIFINE_HOST_* wins over ours: the child gets what it would
     have had from a terminal, not an empty variable."""
-    monkeypatch.setenv("APPDIR", "/bundle")
+    monkeypatch.setenv("FIFINE_IN_BUNDLE", "1")
     monkeypatch.setenv("LD_LIBRARY_PATH", "/bundle/qt/lib:/host/lib")
     monkeypatch.setenv("FIFINE_HOST_LD_LIBRARY_PATH", "/host/lib")
     env = actions.child_env()
@@ -298,8 +298,7 @@ def test_child_env_restores_the_hosts_own_value(monkeypatch):
 
 def test_child_env_is_a_passthrough_outside_a_bundle(monkeypatch):
     """.deb, PPA and source installs must be completely unaffected."""
-    monkeypatch.delenv("APPDIR", raising=False)
-    monkeypatch.delenv("SNAP", raising=False)
+    monkeypatch.delenv("FIFINE_IN_BUNDLE", raising=False)
     monkeypatch.setenv("PYTHONPATH", "/home/user/mylibs")
     monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/whatever/lib")
     env = actions.child_env()
@@ -313,7 +312,7 @@ def test_launched_programs_get_the_de_bundled_env(monkeypatch, tmp_path):
     Without the fix this child never executes a statement — the interpreter
     aborts during startup — so the output file stays empty.
     """
-    monkeypatch.setenv("APPDIR", "/bundle")
+    monkeypatch.setenv("FIFINE_IN_BUNDLE", "1")
     monkeypatch.setenv("PYTHONHOME", "/nonexistent/bundle/python3.12")
     out = tmp_path / "out"
     actions.execute(Action("run_command", {
@@ -364,3 +363,50 @@ def test_volume_step_cannot_become_an_option(monkeypatch):
     actions._volume("up", "-20")
     assert not any(str(a).startswith("-2") for a in seen[0])
     assert "20%+" in seen[0]
+
+
+# -- child_env must not strip on ordinary installs ---------------------------
+
+def test_child_env_does_not_strip_when_only_appdir_is_set(monkeypatch):
+    """0.12.0 regression: child_env keyed "am I bundled?" on APPDIR/SNAP, which
+    are generic. A plain .deb/source app whose environment carried APPDIR for
+    an unrelated reason stripped PYTHONPATH/LD_LIBRARY_PATH from every launched
+    program. Only our own FIFINE_IN_BUNDLE marker may trigger the strip."""
+    for marker in ("APPDIR", "SNAP"):
+        monkeypatch.delenv("FIFINE_IN_BUNDLE", raising=False)
+        monkeypatch.setenv(marker, "/some/unrelated/path")
+        monkeypatch.setenv("PYTHONPATH", "/home/user/mylibs")
+        monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/cuda/lib")
+        env = actions.child_env()
+        assert env["PYTHONPATH"] == "/home/user/mylibs", f"{marker} triggered a strip"
+        assert env["LD_LIBRARY_PATH"] == "/opt/cuda/lib"
+
+
+def test_child_env_strips_only_with_the_bundle_marker(monkeypatch):
+    monkeypatch.setenv("FIFINE_IN_BUNDLE", "1")
+    monkeypatch.setenv("PYTHONHOME", "/bundle/py")
+    monkeypatch.setenv("QT_PLUGIN_PATH", "/bundle/qt")
+    env = actions.child_env()
+    assert "PYTHONHOME" not in env
+    assert "QT_PLUGIN_PATH" not in env
+    assert "FIFINE_IN_BUNDLE" not in env, "the marker must not reach the child"
+
+
+def test_child_env_restores_host_values_even_without_the_marker(monkeypatch):
+    """An older bundle (0.12.0/0.12.1) has no marker but does write the
+    FIFINE_HOST_* stashes; the host's real value is still restored."""
+    monkeypatch.delenv("FIFINE_IN_BUNDLE", raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/bundle/qt:/host/lib")
+    monkeypatch.setenv("FIFINE_HOST_LD_LIBRARY_PATH", "/host/lib")
+    env = actions.child_env()
+    assert env["LD_LIBRARY_PATH"] == "/host/lib"
+
+
+def test_volume_step_zero_is_a_no_op(monkeypatch):
+    """0.12.0 regression: abs()+max(1,..) raised a step of "0" to 1, so a
+    zero-step volume key nudged 1% instead of doing nothing."""
+    seen = []
+    monkeypatch.setattr(actions, "_run", lambda args, **k: seen.append(args))
+    monkeypatch.setattr(actions, "AUDIO", "pipewire")
+    actions._volume("up", "0")
+    assert any("0%+" in str(a) for a in seen[0]), f"step 0 was not a no-op: {seen[0]}"

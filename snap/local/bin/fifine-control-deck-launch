@@ -17,6 +17,10 @@ for _v in PYTHONHOME PYTHONPATH PYTHONDONTWRITEBYTECODE LD_LIBRARY_PATH LD_PRELO
     if [ -n "${!_v+x}" ]; then export "FIFINE_HOST_${_v}=${!_v}"; fi
 done
 unset _v
+# Explicit "running from the bundle" marker; actions.child_env() strips our
+# vars from launched programs only when this is set. SNAP alone is too generic
+# (it leaks into anything spawned inside a snap). See child_env().
+export FIFINE_IN_BUNDLE=1
 
 # Bundled Python site-packages (core24 -> python3.12; glob to be version-proof).
 SITE="$(ls -d "$SNAP"/lib/python3*/site-packages 2>/dev/null | head -n1)"

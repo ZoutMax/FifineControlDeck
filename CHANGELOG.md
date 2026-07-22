@@ -4,6 +4,37 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.12.2] - 2026-07-22
+
+Five more defects introduced by 0.12.0's monitor and launcher changes, found by
+finishing the same adversarial review that produced 0.12.1 and each reproduced
+against 0.12.1 before being fixed. All are in features that need specific
+hardware or an unusual environment, so most people never saw them; update anyway
+if you use GPU monitor keys or launch apps from a key.
+
+### Fixed
+- **A GPU, VRAM or GPU-temperature key recovers again after a hiccup.** 0.12.0
+  counted read failures across the whole session and never reset the count, so
+  twenty brief failures spread over days — a laptop's discrete GPU suspending,
+  a driver reset — permanently pinned the key to "n/a" until you restarted the
+  app. It now counts consecutive failures, so an isolated blip is forgotten on
+  the next good reading, while a genuinely stuck sensor still gives up rather
+  than retrying forever.
+- **Apps launched from a key keep their environment on ordinary installs.**
+  0.12.0 decided it was running from a bundle by looking for two very common
+  environment variables, so a normal `.deb`, PPA or source install that
+  happened to have either set could strip a launched program's library and
+  module paths and make it fail. The bundle is now recognised by a marker only
+  the AppImage and snap set.
+- **A volume key with a step of 0 does nothing again**, instead of nudging the
+  volume by 1% on every press.
+- **A monitor graph fed by a sensor that reports on alternate ticks shows a
+  line again** instead of an empty box.
+- **Network readings are narrower and roll over correctly.** A rate just under
+  a megabyte now shows "1.0 MB/s" rather than "1000.0 kB/s", and kilobyte
+  readings dropped a digit, so the value on a network key is drawn at full size
+  again.
+
 ## [0.12.1] - 2026-07-22
 
 Fixes three defects introduced by 0.12.0 itself, found by an adversarial review
