@@ -6,7 +6,40 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Fixed
+From three independent audits: the action engine, the configuration model, and
+the system-monitor sampler. Nothing here was reported by a user, and none of it
+is a regression from 0.11.x.
+
+### Fixed — data you could lose
+- **Deleting a page now asks first, and says what it will take.** The "–" button
+  is a small square beside "+" and "⇅", and one misclick destroyed every key on
+  the page plus any folder hanging off it, at unlimited depth, with an autosave
+  600 ms later and no undo. Deleting a profile has always asked. The
+  confirmation counts what would go, walked through every nested level. An
+  untouched page still deletes without a prompt.
+- **"Clear key" now asks before deleting a folder.** It still clears the folder,
+  which is right: a blank key that silently resurrects old pages when a folder
+  action is dropped on it later would be worse. But what a folder holds is
+  invisible from that panel, and the button reads as blanking a key face.
+- **Importing a configuration can no longer destroy your backup.** The backup
+  went to a fixed `config.json.bak`, so importing twice overwrote the copy of
+  the configuration you actually built. Backups now take the next free slot.
+  The same fixed-name problem, and the same fix, applies to the `.corrupt` copy
+  kept when a config cannot be read, and to the `.v<N>` copy kept when one comes
+  from a newer version.
+- **A failed backup now cancels the import.** The dialog promises a backup, then
+  the failure was swallowed and your configuration replaced anyway. The dialog
+  also names the file it is about to write, and the import's own save is
+  reported if it fails instead of leaving the screen and the disk disagreeing.
+- **A setting this version does not recognise survives an unrelated edit.** A
+  key's action parameters were rebuilt from what this build knows, so a newer
+  version's option was destroyed simply by renaming the key. Sync a config
+  between two machines on different versions and one rename was enough.
+- **One hand-edited profile no longer discards the whole file.** A single
+  profile missing its `pages` sent every other profile, plus brightness and
+  glow, to `.corrupt` and replaced them with defaults.
+
+### Fixed — things that failed silently
 - **Apps launched from a key now start on the AppImage and snap builds.** Those
   two launchers point `PYTHONHOME`, `LD_LIBRARY_PATH` and `QT_PLUGIN_PATH`
   inside the bundle so the app finds its own Python and Qt, and every program a
@@ -32,6 +65,41 @@ follows [Semantic Versioning](https://semver.org/).
   later step. Delays are clamped to the 30 s the editor already allows, and a
   clamped delay says so in the log, noting that the deck cannot answer any other
   key while it waits.
+- **A dead deck is no longer invisible on a page of monitor keys.** Monitor keys
+  ignored whether the device accepted the picture, so once the connection died
+  they kept "updating" a deck that received nothing, while the window showed
+  live values. They now check, and so does the retry: a write the device
+  rejected used to leave a record claiming the key already showed that picture,
+  which froze the key until its content happened to change.
+- **An unreadable configuration no longer stops the app from appearing.** It was
+  reported only as a crash message on a stream nobody sees when the app is
+  launched from the menu. It now says what could not be read and changes
+  nothing.
+
+### Fixed — things that read the wrong number
+- **A network key measured local traffic.** With no interface chosen it summed
+  every interface including loopback, so a copy between two programs on your own
+  machine appeared as network throughput: 209 MB over localhost read as 3.1 GB/s
+  in both directions at once. Docker and virtual-machine bridges were
+  double-counted the same way. It now counts physical interfaces only.
+- **A network key coming back after a while no longer invents a spike.** Switch
+  pages for ten minutes and the first reading on return was the average over the
+  whole absence, five megabytes a second when nothing was moving, which also
+  flattened the graph for the next half-minute. A gap now reads as a gap.
+- **Small sizes are no longer rounded into nonsense.** 1500 bytes showed as
+  "2 kB", and 999999 as "1000 kB" instead of rolling over to MB.
+- **A graph key's gaps are drawn as gaps.** Missing samples were squeezed out,
+  so two readings fifteen seconds apart were joined by a line implying
+  measurements that never happened.
+
+### Changed
+- **The deck stays responsive while a long macro runs.** Key presses made during
+  a multi-action's delay used to queue without limit and then all fire at once;
+  past a sensible backlog they are now declined, with a line in the log saying
+  why.
+- **An idle graph key stops rewriting the same picture** to the deck several
+  times a second, and a GPU reading that cannot be taken now gives up instead of
+  retrying twice a second forever.
 
 ## [0.11.3] - 2026-07-22
 
