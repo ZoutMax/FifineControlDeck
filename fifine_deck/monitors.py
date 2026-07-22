@@ -64,6 +64,10 @@ PERCENT_METRICS = frozenset({"cpu", "ram", "vram", "gpu", "disk", "temp", "gpute
 TARGETED_METRICS = frozenset({"disk", "net", "temp"})
 
 HISTORY_LEN = 32             # sparkline points kept per metric
+# Sampled streams kept before the least recently used half is dropped. A deck
+# has 15 keys, so anything beyond a couple of dozen distinct streams is churn
+# from the editor rather than real configuration.
+MAX_STREAMS = 64
 
 ACCENT = (64, 158, 255)      # matches the GUI accent #409eff
 WARN = (255, 92, 92)         # gauge/graph turn red above WARN_PCT
@@ -210,6 +214,8 @@ class Sampler:
         self._vram_retries = 0         # bounded: a dead source must settle
         self._gpu_retries = 0
         self._gputemp_retries = 0
+        # Backends that PROBE fine but cannot be read; see _gpu_read_failed.
+        self._read_failures: dict[str, int] = {}
         # psutil keys its cpu_percent since-last-call baseline PER THREAD, so
         # priming must be per thread too — a flag primed on one thread would
         # let another thread's first (garbage) reading through as real.
@@ -218,6 +224,11 @@ class Sampler:
         # returns a tuple, not a str. Bounded by the number of configured monitor
         # keys times their distinct failure modes.
         self._logged_failures: set[tuple[tuple, str]] = set()
+        # LRU bookkeeping for _evict_old_streams. A counter, not a clock: it
+        # only ever needs an ordering, and time.monotonic is monkeypatched all
+        # over the tests.
+        self._stream_seen: dict[tuple, int] = {}
+        self._stream_clock = 0
 
     # -- public ------------------------------------------------------------
     def sample(self, spec: MonitorSpec) -> Reading:
@@ -241,10 +252,33 @@ class Sampler:
                             "will not be logged): %s", spec.metric, e)
             reading = Reading(None, "n/a", METRICS.get(spec.metric, ""), ok=False)
         k = spec.key()
+        if k not in self._last:
+            self._evict_old_streams()
         self._last[k] = reading
         hist = self._hist.setdefault(k, deque(maxlen=HISTORY_LEN))
         hist.append(reading.sample)
+        self._stream_seen[k] = self._stream_clock
+        self._stream_clock += 1
         return reading
+
+    def _evict_old_streams(self) -> None:
+        """Forget the least recently sampled streams once there are too many.
+
+        Nothing ever removed one, and the target field is a QLineEdit wired to
+        textChanged: every keystroke while a monitor key is selected writes a
+        new MonitorSpec, and every one the monitor thread catches on a tick
+        became a permanent entry. Measured: 12 s of typing left 21 streams.
+        Each is only a Reading plus a 32-slot deque, so this is a drip rather
+        than a hazard — but it is unbounded over a process lifetime, and a real
+        deck cannot have anything like MAX_STREAMS distinct live ones.
+        """
+        if len(self._last) < MAX_STREAMS:
+            return
+        oldest = sorted(self._stream_seen, key=lambda k: self._stream_seen[k])
+        for k in oldest[:MAX_STREAMS // 2]:
+            self._last.pop(k, None)
+            self._hist.pop(k, None)
+            self._stream_seen.pop(k, None)
 
     def last(self, spec: MonitorSpec) -> Reading:
         return self._last.get(spec.key()) or placeholder(spec)
@@ -346,6 +380,51 @@ class Sampler:
             setattr(self, attr, b)
         return b
 
+    def _gpu_read_failed(self, attr: str, retries_attr: str) -> None:
+        """A backend that probed fine but could not be READ.
+
+        Dropping the cache so the next sample re-probes is right for a driver
+        unload or a GPU hot-remove. But the retry budget above only counts
+        probes that RETURN "retry", and it resets to zero on every successful
+        probe — so for the failure mode where the probe keeps succeeding and
+        only the read fails (NVML after a Xid error: nvmlInit and
+        nvmlDeviceGetHandleByIndex both work, device queries do not), the cycle
+        probe-ok / read-fails / drop-cache repeated forever. Roughly twice a
+        second at the fastest interval, each iteration leaking another NVML
+        init refcount, and the key read "n/a" the whole time with exactly one
+        line in the log to explain it.
+
+        So count read failures separately and settle for good once they pile
+        up, which is what the "we stop re-running import+nvmlInit every
+        interval" invariant meant to promise.
+        """
+        # Its OWN counter, deliberately not retries_attr: _resolve_gpu_backend
+        # zeroes that one on every successful probe, and here the probe keeps
+        # succeeding — so sharing it would reset the budget on every lap of the
+        # very loop this exists to break.
+        n = self._read_failures.get(attr, 0) + 1
+        self._read_failures[attr] = n
+        if n >= 20:
+            log.warning("%s: the GPU backend probes but cannot be read (%d "
+                        "attempts); giving up until restart", attr, n)
+            self._release_nvml(getattr(self, attr))
+            setattr(self, attr, ("none",))
+        else:
+            setattr(self, attr, None)
+
+    @staticmethod
+    def _release_nvml(backend) -> None:
+        """Balance the nvmlInit() a probe did, when we stop using its handle.
+
+        Nothing on the vram/gpu path ever called nvmlShutdown, so every probe
+        added a refcount that was never given back.
+        """
+        try:
+            if backend and backend[0] == "nvml":
+                backend[1].nvmlShutdown()
+        except Exception:
+            log.debug("nvmlShutdown failed", exc_info=True)
+
     def _sample_vram(self, spec: MonitorSpec) -> Reading:
         b = self._resolve_gpu_backend("_vram_backend", _probe_vram,
                                       "_vram_retries")
@@ -364,7 +443,7 @@ class Sampler:
             # The backend died under us (driver unload, GPU hot-remove):
             # drop the cache so the next sample re-probes instead of
             # warning every interval forever.
-            self._vram_backend = None
+            self._gpu_read_failed("_vram_backend", "_vram_retries")
             raise
         pct = 100.0 * used / total if total else 0.0
         return Reading(pct, f"{pct:.0f}%",
@@ -383,7 +462,7 @@ class Sampler:
                     pct = float(f.read())
         except Exception:
             # backend died (driver unload / hot-remove): re-probe next sample
-            self._gpu_backend = None
+            self._gpu_read_failed("_gpu_backend", "_gpu_retries")
             raise
         return Reading(pct, f"{pct:.0f}%", "load", sample=pct)
 
@@ -406,7 +485,7 @@ class Sampler:
                     raise LookupError(f"sensor {b[1]} vanished")
                 label, val = picked
         except Exception:
-            self._gputemp_backend = None    # re-probe next sample (see vram)
+            self._gpu_read_failed("_gputemp_backend", "_gputemp_retries")
             raise
         pct = max(0.0, min(100.0, val))
         return Reading(pct, f"{val:.0f}°C", label, sample=val)
@@ -696,13 +775,27 @@ def _draw_graph(draw, size: int, history: list[float | None], is_percent: bool,
         return
     scale = 100.0 if is_percent else max(max(pts), 1.0)
     h, w = bottom - top, right - left
-    n = len(pts)
-    xy = []
-    for i, v in enumerate(pts):
-        x = left + int(w * i / (n - 1))
+    # Position each point at its place in TIME, not its place among the
+    # non-None values. Compacting the gaps out drew [10, None x29, 90] as a
+    # full-width line between two samples fifteen seconds apart, implying a
+    # continuity that was not measured — most visible right after warm-up or
+    # after a run of failed samples.
+    n = max(len(history) - 1, 1)
+    runs: list[list[tuple[int, int]]] = []
+    current: list[tuple[int, int]] = []
+    for i, v in enumerate(history):
+        if v is None:
+            if len(current) > 1:
+                runs.append(current)
+            current = []
+            continue
+        x = left + int(w * i / n)
         y = bottom - int(h * max(0.0, min(1.0, v / scale)))
-        xy.append((x, y))
-    # soft fill under the line, then the line itself
-    poly = xy + [(xy[-1][0], bottom), (xy[0][0], bottom)]
-    draw.polygon(poly, fill=_mix(grid, accent, 0.35))
-    draw.line(xy, fill=accent, width=2)
+        current.append((x, y))
+    if len(current) > 1:
+        runs.append(current)
+    # soft fill under each unbroken run, then the line itself
+    for xy in runs:
+        poly = xy + [(xy[-1][0], bottom), (xy[0][0], bottom)]
+        draw.polygon(poly, fill=_mix(grid, accent, 0.35))
+        draw.line(xy, fill=accent, width=2)

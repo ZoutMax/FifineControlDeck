@@ -1359,3 +1359,58 @@ def test_small_byte_values_are_not_rounded_into_nonsense():
     assert monitors._fmt_bytes(999999) == "1000.0 kB" or \
         monitors._fmt_bytes(999999).endswith("kB")
     assert monitors._fmt_bytes(0) == "0 B"
+
+
+def test_a_gpu_backend_that_reads_badly_gives_up_eventually(monkeypatch):
+    """The retry budget only counted probes returning "retry", and reset to
+    zero on every successful probe — so for the failure mode where the probe
+    keeps working and only the read fails (NVML after a Xid error), the cycle
+    probe-ok / read-fails / drop-cache ran forever, ~2/s, each iteration
+    leaking another NVML init refcount."""
+    probes = {"n": 0}
+
+    class _Bad:
+        def nvmlDeviceGetMemoryInfo(self, h):
+            raise RuntimeError("GPU is lost")
+
+        def nvmlShutdown(self):
+            probes["shutdown"] = probes.get("shutdown", 0) + 1
+
+    def probe(final=False):
+        probes["n"] += 1
+        return ("nvml", _Bad(), object())
+
+    monkeypatch.setattr(monitors, "_probe_vram", probe)
+    s = Sampler()
+    spec = MonitorSpec.from_params({"metric": "vram"})
+    for _ in range(200):
+        s.sample(spec)
+    assert probes["n"] < 40, f"re-probed {probes['n']} times in 200 samples"
+    assert s._vram_backend == ("none",), "never settled"
+    assert probes.get("shutdown"), "the NVML init was never balanced"
+
+
+def test_sample_streams_do_not_grow_without_bound():
+    """Typing in the target field writes a new MonitorSpec per keystroke, and
+    every one the monitor thread caught became a permanent stream."""
+    s = Sampler()
+    for i in range(monitors.MAX_STREAMS * 3):
+        s.sample(MonitorSpec.from_params({"metric": "disk", "target": f"/m{i}"}))
+    assert len(s._last) <= monitors.MAX_STREAMS
+    assert len(s._hist) <= monitors.MAX_STREAMS
+
+
+def test_the_sparkline_leaves_gaps_where_samples_are_missing():
+    """Compacting the None entries out mapped each surviving point to its index
+    among the survivors, so two samples fifteen seconds apart were drawn as a
+    full-width line implying continuity that was never measured."""
+    spec = MonitorSpec.from_params({"metric": "cpu", "style": "graph"})
+    gappy = [10.0] + [None] * 29 + [90.0]
+    dense = [10.0, 90.0]
+    a = render_monitor(100, spec, Reading(90.0, "90%"), gappy)
+    b = render_monitor(100, spec, Reading(90.0, "90%"), dense)
+    assert a.tobytes() != b.tobytes(), \
+        "a run of missing samples renders identically to two adjacent ones"
+    # a single point either side of a gap is not a line, and must not crash
+    render_monitor(100, spec, Reading(None, "…"), [10.0, None, 90.0])
+    render_monitor(100, spec, Reading(None, "…"), [None] * 32)
