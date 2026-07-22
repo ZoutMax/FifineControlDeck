@@ -83,7 +83,44 @@ tripwire for that failure returning.
 
 ### Verifying a build
 
-The AppImage should carry its own Python and Qt entirely:
+Two checks, and the first one matters most: **run the CI smoke test against the
+bundle's own interpreter, not the host's.** Pruning is the one build step that
+can delete something the app needs, and an import error inside a released
+AppImage is invisible until a user hits it.
+
+```bash
+./fifine-control-deck-<version>-x86_64.AppImage --appimage-extract >/dev/null
+cp .github/smoke_test.py /tmp/ && cd /tmp     # a cwd with no fifine_deck in it,
+                                              # or the repo copy shadows the bundle's
+HOME=$(mktemp -d) QT_QPA_PLATFORM=offscreen \
+    /path/to/squashfs-root/usr/bin/python3 /tmp/smoke_test.py
+```
+
+`SMOKE TEST OK` means the bundled Python imported the app, round-tripped a
+config, rendered a key, encoded a device JPEG, loaded the icon library and
+constructed the GUI. Worth adding when a release is cut, since it exercises the
+artifact users actually download rather than the tree it was built from:
+
+```bash
+gh release download v<version> --pattern "*-x86_64.AppImage"
+```
+
+Check the vendored native library too, which is loaded by `ctypes` and so has no
+import to fail loudly:
+
+```bash
+squashfs-root/usr/bin/python3 -c "
+import ctypes, os, fifine_deck
+lib = ctypes.CDLL(os.path.join(os.path.dirname(fifine_deck.__file__),
+                  'backend/StreamDock/Transport/TransportDLL/libtransport.so'))
+print(hasattr(lib, 'transport_create'), hasattr(lib, 'transport_destroy'))"
+```
+
+Verified this way on the published v0.11.3 AppImage: Python 3.12.12, PyQt6,
+Pillow 12.3.0, psutil 7.2.2, `libtransport.so` and both symbols present, smoke
+test green.
+
+Second, the AppImage should carry its own Python and Qt entirely:
 
 ```bash
 ./fifine-control-deck-*.AppImage &
