@@ -1672,3 +1672,49 @@ def test_clearing_a_key_deselected_mid_prompt_is_a_clean_no_op(win, monkeypatch)
 
     assert kc.folder is not None, "cleared a key that was no longer selected"
     assert kc.label == "Work"
+
+
+def test_deleting_a_page_the_deck_entered_a_folder_on_does_not_orphan_it(win, monkeypatch):
+    """Third nested-loop interleaving (the audit's confirmed finding): if the
+    deck enters a folder that lives ON the page being deleted while the confirm
+    dialog is open, deleting the page orphaned that folder — unreachable from
+    the config yet still shown, so edits to it vanished on save. Navigation
+    must snap back to root so nothing editable is left dangling."""
+    from fifine_deck.model import Page
+    w, cfg, c = win
+    root = cfg.active_profile()
+    root.pages.append(Page(name="P2"))
+    w._reload_pages()
+    kc = _stock_folder_key(w, cfg, index=1, label="Work")   # folder on page 0
+    fld = kc.folder
+    c.page_index = 0
+
+    monkeypatch.setattr(mw, "QMessageBox", _ActingBox)
+    _AutoBox.answer = QMessageBox.StandardButton.Yes
+    # the deck enters the folder that lives on the page being deleted
+    _ActingBox.during = lambda: c.enter_folder(fld)
+    try:
+        w._del_page()
+    finally:
+        _ActingBox.during = None
+
+    # the folder is gone with its page; the deck must not still be inside it
+    def reachable_folders(cont):
+        out = set()
+        stack = [cont]
+        while stack:
+            h = stack.pop()
+            for pg in getattr(h, "pages", []):
+                for k in pg.keys.values():
+                    if k.folder is not None:
+                        out.add(id(k.folder)); stack.append(k.folder)
+        return out
+
+    assert id(fld) not in reachable_folders(root), "the folder survived the delete"
+    assert c.at_root(), "the deck was left inside the orphaned folder"
+    assert c.container() is root, "container() still points at the orphan"
+    # and an edit now lands somewhere that will actually be saved
+    w._on_key_selected(1)
+    assert w.editor._kc is None or w.editor._kc in [
+        kk for pg in root.pages for kk in pg.keys.values()], \
+        "the editor is still bound to an orphaned key"

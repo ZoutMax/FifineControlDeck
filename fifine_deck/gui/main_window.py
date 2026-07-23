@@ -663,6 +663,13 @@ class MainWindow(QMainWindow):
             del cont.pages[doomed]
             if self._container() is cont:
                 self.controller.page_index = 0
+        # If the deck dived into a folder that lived on the page we just
+        # deleted (a third nested-loop interleaving the identity delete did not
+        # cover), that folder is now orphaned — unreachable from the config,
+        # yet still shown, so edits to it would preview fine and vanish on save.
+        # Snap back to root when that happened; the general reachability check
+        # also covers a folder nested inside the orphaned one.
+        self.controller.revalidate_nav()
         # The editor/knob panels may be bound to the page we just deleted.
         # The async page-change resync can't be relied on to clear them:
         # deleting the page at index 0 keeps (container, page_index) equal,

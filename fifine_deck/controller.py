@@ -426,6 +426,40 @@ class DeckController:
             self._container = None
             self.page_index = 0
 
+    def revalidate_nav(self) -> bool:
+        """Snap back to the profile root if the folder we are showing is no
+        longer reachable from the active profile, and report whether we did.
+
+        A structural edit — deleting the page that held a folder key — can
+        orphan the folder the deck is currently inside. Left alone, the GUI
+        keeps presenting that folder as a live location and every edit to it is
+        silently dropped on the next save (the 0.8.1 "stray edit vanishes"
+        hazard). Deck navigation runs on the action-worker thread and is not
+        gated during a modal, so this cannot be prevented at the edit site; it
+        has to be checked after any page mutation. Walking the whole reachable
+        folder set (rather than special-casing one interleaving) closes the
+        general case, including a folder nested inside the orphaned one.
+        """
+        with self._lock:
+            cur = self._container
+            if cur is None:
+                return False                 # already at root
+            reachable: set[int] = set()
+            stack = [self.config.active_profile()]
+            while stack:
+                holder = stack.pop()
+                for pg in getattr(holder, "pages", []):
+                    for kc in pg.keys.values():
+                        if kc.folder is not None and id(kc.folder) not in reachable:
+                            reachable.add(id(kc.folder))
+                            stack.append(kc.folder)
+            if id(cur) in reachable:
+                return False
+            self._nav = []
+            self._container = None
+            self.page_index = 0
+            return True
+
     # -- rendering ---------------------------------------------------------
     def render_key(self, index: int) -> None:
         # Hold the lock for the whole body: all app-initiated device writes and
