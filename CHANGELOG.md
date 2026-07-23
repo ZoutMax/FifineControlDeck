@@ -4,6 +4,16 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.12.3] - 2026-07-23
+
+### Fixed
+- **Deleting a page can no longer strand you inside a folder that page held.**
+  If you pressed a folder key on the deck while the delete-page confirmation was
+  open, and that folder lived on the page being deleted, the app kept showing the
+  folder after the page was gone — and any edit you made inside it was silently
+  dropped on the next save. Navigation now returns to the top level whenever the
+  folder you are in is removed out from under it.
+
 ## [0.12.2] - 2026-07-22
 
 From three independent audits: the action engine, the configuration model, and
