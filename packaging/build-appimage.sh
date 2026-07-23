@@ -32,7 +32,7 @@ fi
 [ -n "$VERSION" ] || { echo "FATAL: no version given and none in debian/changelog" >&2; exit 1; }
 
 PY_VER="3.12"
-PY_FULL="3.12.12"
+PY_FULL="3.12.13"    # a reproducible PIN; auto-falls-back if upstream rotates it
 PY_TAG="cp312-cp312-manylinux2014_x86_64"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/fifine-appimage"
 BUILD="$(mktemp -d)"
@@ -50,8 +50,26 @@ fetch() {  # fetch <url> <dest>  — cached, so rebuilds are offline
 
 fetch "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" \
       "$CACHE/appimagetool"
-fetch "https://github.com/niess/python-appimage/releases/download/python${PY_VER}/python${PY_FULL}-${PY_TAG}.AppImage" \
-      "$CACHE/python.AppImage"
+# The python-appimage project rotates its patch releases (3.12.12 -> 3.12.13 ->
+# ...) and DELETES the superseded asset, so a pinned URL 404s the instant
+# upstream bumps — which is exactly what broke the 0.12.4 release build in CI
+# (it works locally only because the base was already cached). Try the pin
+# first for reproducibility, then fall back to whichever cp312 manylinux asset
+# the python${PY_VER} release currently offers.
+if [ ! -s "$CACHE/python.AppImage" ]; then
+    echo ">> downloading python base"
+    pinned="https://github.com/niess/python-appimage/releases/download/python${PY_VER}/python${PY_FULL}-${PY_TAG}.AppImage"
+    if ! curl -fsSL -o "$CACHE/python.AppImage.part" "$pinned"; then
+        echo ">> pinned ${PY_FULL} is gone upstream; resolving the current ${PY_TAG} asset"
+        resolved="$(curl -fsSL "https://api.github.com/repos/niess/python-appimage/releases/tags/python${PY_VER}" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); u=[a['browser_download_url'] for a in d.get('assets',[]) if a['name'].endswith('${PY_TAG}.AppImage')]; print(u[-1] if u else '')")"
+        [ -n "$resolved" ] || { echo "FATAL: no ${PY_TAG} python asset found upstream" >&2; exit 1; }
+        echo ">> using $resolved"
+        curl -fsSL -o "$CACHE/python.AppImage.part" "$resolved" \
+            || { echo "FATAL: python base download failed" >&2; exit 1; }
+    fi
+    mv "$CACHE/python.AppImage.part" "$CACHE/python.AppImage"
+fi
 chmod +x "$CACHE/appimagetool" "$CACHE/python.AppImage"
 
 echo ">> extracting the Python base"
