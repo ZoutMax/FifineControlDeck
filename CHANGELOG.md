@@ -4,6 +4,31 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.12.4] - 2026-07-23
+
+Five issues from a whole-codebase architecture audit, each reproduced before it
+was fixed.
+
+### Fixed
+- **Device write errors are no longer read as successes.** The check for a
+  failed key write tested for a negative result, but the driver returns an
+  unsigned status where any non-zero value is an error — so a real write failure
+  looked like success and was never reported. It now tests for non-zero, so a
+  genuinely rejected write is caught and the key retried, the same way a
+  disconnected deck already was.
+- **Reordering pages no longer crashes if the deck navigates mid-dialog.** With
+  the reorder dialog open, pressing a folder or page key on the deck could move
+  which page was current, and applying the new order then crashed the window.
+  It now reorders the pages it was showing, regardless of where the deck went.
+- **The background (headless) service now saves brightness and profile changes
+  made from the deck.** Only the window was saving them, so on the no-window
+  service a brightness or profile switch done from the keypad was lost on
+  restart. (The current page is deliberately not saved, in either mode.)
+- **A GPU monitor key no longer leaks a small amount of memory** each time the
+  graphics driver is briefly unavailable (for example during a driver reload).
+- **Clearing a key that holds a saved password now removes the password from the
+  keyring**, instead of leaving it stored indefinitely.
+
 ## [0.12.3] - 2026-07-23
 
 ### Fixed

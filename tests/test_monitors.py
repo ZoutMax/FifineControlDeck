@@ -1508,3 +1508,23 @@ def test_a_flaky_alternating_sensor_still_draws_something():
     blank = render_monitor(100, spec, Reading(50.0, "50°C"), [None] * 32)
     assert ImageChops.difference(img.convert("RGB"), blank.convert("RGB")).getbbox() \
         is not None, "a flaky sensor rendered an empty graph"
+
+
+def test_probe_balances_nvml_init_when_the_handle_query_fails(monkeypatch):
+    """Confirmed audit finding: _probe_vram/_probe_gpu called nvmlInit() then, if
+    nvmlDeviceGetHandleByIndex raised, swallowed it without nvmlShutdown — leaking
+    one NVML init refcount per probe on a sick NVML."""
+    import sys, types
+    calls = {"init": 0, "shutdown": 0}
+    fake = types.SimpleNamespace(
+        nvmlInit=lambda: calls.__setitem__("init", calls["init"] + 1),
+        nvmlShutdown=lambda: calls.__setitem__("shutdown", calls["shutdown"] + 1),
+        nvmlDeviceGetHandleByIndex=lambda i: (_ for _ in ()).throw(RuntimeError("GPU lost")),
+    )
+    monkeypatch.setitem(sys.modules, "pynvml", fake)
+    monkeypatch.setattr(monitors, "_nvidia_gpu_present", lambda: False)
+    for probe in (monitors._probe_vram, monitors._probe_gpu, monitors._probe_gputemp):
+        calls["init"] = calls["shutdown"] = 0
+        probe(final=True)
+        assert calls["init"] == 1 and calls["shutdown"] == 1, \
+            f"{probe.__name__}: nvmlInit not balanced (init={calls['init']} shutdown={calls['shutdown']})"

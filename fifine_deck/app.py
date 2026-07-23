@@ -370,6 +370,27 @@ def run_headless() -> int:
         return 1
     config = DeckConfig.load()
     controller = DeckController(config)
+
+    # Persist deck-driven state changes. In GUI mode the window saves on a deck
+    # brightness or profile change; headless had no such hook, so brightness and
+    # profile switches made from the deck were silently lost on restart (the
+    # page index is deliberately not persisted in either mode). Save only when
+    # a persisted field actually changed, so ordinary page navigation — which
+    # fires on_page_changed constantly — does not hammer the disk.
+    _saved = {"b": config.brightness, "p": config.active_profile_id}
+
+    def _persist() -> None:
+        if (config.brightness, config.active_profile_id) == (_saved["b"], _saved["p"]):
+            return
+        _saved["b"], _saved["p"] = config.brightness, config.active_profile_id
+        try:
+            config.save()
+        except Exception as e:
+            log.warning("headless: could not persist a deck change: %s", e)
+
+    controller.on_brightness_changed = lambda _v: _persist()
+    controller.on_page_changed = _persist      # also fires on profile switch
+
     ok = controller.start()
     log.info("headless started; device connected=%s. Ctrl+C to quit.", ok)
 

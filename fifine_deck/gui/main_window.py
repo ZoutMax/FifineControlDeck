@@ -701,10 +701,25 @@ class MainWindow(QMainWindow):
             dlg.deleteLater()
         if order == list(range(len(cont.pages))):
             return
-        current_id = cont.pages[self.controller.page_index].id
-        cont.pages = [cont.pages[i] for i in order]
-        self.controller.page_index = next(
-            (i for i, p in enumerate(cont.pages) if p.id == current_id), 0)
+        # The dialog above ran a nested event loop, during which the deck can
+        # navigate (enter_folder / go_back / switch page) on the action-worker
+        # thread. That makes self.controller.page_index point at whatever
+        # container is current NOW, which may not be `cont` — so indexing
+        # cont.pages by it crashed with IndexError. Same nested-loop hazard as
+        # _del_page. Under the lock, index by page_index only when `cont` is
+        # still the shown container, clamped either way, and re-point page_index
+        # only in that case.
+        with self.controller._lock:
+            if sorted(order) != list(range(len(cont.pages))):
+                return                      # page set changed under us; ignore
+            on_cont = self._container() is cont
+            idx = self.controller.page_index if on_cont else 0
+            idx = max(0, min(idx, len(cont.pages) - 1))
+            current_id = cont.pages[idx].id
+            cont.pages = [cont.pages[i] for i in order]
+            if on_cont:
+                self.controller.page_index = next(
+                    (i for i, p in enumerate(cont.pages) if p.id == current_id), 0)
         self._reload_pages()
         self._refresh_all_previews()
         self.controller.render_page()

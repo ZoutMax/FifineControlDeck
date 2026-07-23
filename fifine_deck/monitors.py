@@ -634,13 +634,22 @@ def _probe_vram(final: bool = False):
     the caller, bounded; final=True is the caller settling after the retry
     budget: best remaining answer only, never another retry."""
     nvml_present = False
+    nvml_inited = False
     try:
         import pynvml
         nvml_present = True
         pynvml.nvmlInit()
+        nvml_inited = True
         return ("nvml", pynvml, pynvml.nvmlDeviceGetHandleByIndex(0))
     except Exception:
-        pass
+        # nvmlInit() succeeded but the handle query failed (driver still
+        # loading, GPU lost): balance the init, or every probe on a sick NVML
+        # leaks a refcount. Only when init actually ran.
+        if nvml_inited:
+            try:
+                pynvml.nvmlShutdown()
+            except Exception:
+                pass
     if nvml_present and not final and _nvidia_gpu_present():
         return ("retry",)
     for total in sorted(glob.glob("/sys/class/drm/card*/device/mem_info_vram_total")):
@@ -655,13 +664,22 @@ def _probe_gpu(final: bool = False):
     sysfs gpu_busy_percent file. Same fallback/retry/final semantics as
     _probe_vram (see there for the hybrid-machine reasoning)."""
     nvml_present = False
+    nvml_inited = False
     try:
         import pynvml
         nvml_present = True
         pynvml.nvmlInit()
+        nvml_inited = True
         return ("nvml", pynvml, pynvml.nvmlDeviceGetHandleByIndex(0))
     except Exception:
-        pass
+        # nvmlInit() succeeded but the handle query failed (driver still
+        # loading, GPU lost): balance the init, or every probe on a sick NVML
+        # leaks a refcount. Only when init actually ran.
+        if nvml_inited:
+            try:
+                pynvml.nvmlShutdown()
+            except Exception:
+                pass
     if nvml_present and not final and _nvidia_gpu_present():
         return ("retry",)
     for busy in sorted(glob.glob("/sys/class/drm/card*/device/gpu_busy_percent")):

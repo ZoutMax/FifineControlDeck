@@ -524,9 +524,11 @@ class DeckController:
                     if self._key_face_changed(index, img):
                         res = dev.set_key_image_pil(index, img)
                         self._note_write_result(res, index)
-                        if res is None or (isinstance(res, int) and res < 0):
-                            # Same optimistic-stamp problem as the monitor path:
-                            # without this, one write the device did not accept
+                        if res is None or (isinstance(res, int) and res != 0):
+                            # TransportResult is unsigned: 0 == success, non-zero
+                            # == error (see _note_write_result). Same optimistic-
+                            # stamp problem as the monitor path: without this,
+                            # one write the device did not accept
                             # left the key frozen until its picture changed.
                             self._forget_key_face(index)
                 self._sync_gif_loop()
@@ -654,13 +656,14 @@ class DeckController:
         """Notice a key write that did not land.
 
         set_key_image_stream returns None when the transport has no handle —
-        it returns EARLY and writes nothing — and a negative int on a C-level
-        error. Both were discarded by every caller, which is what made a dead
-        handle invisible: the app carried on painting into nothing while the
-        status bar said "connected". Log it, once per run of failures, so the
-        log is useful without becoming a flood at one line per key per render.
+        it returns EARLY and writes nothing — and a TransportResult otherwise.
+        That result is a `c_uint32` (see LibUSBHIDAPI restype declarations), and
+        the SDK's own convention is 0 == TRANSPORT_SUCCESS, non-zero == error.
+        So the failure test is `!= 0`, NOT `< 0`: an unsigned value is never
+        negative, so the original `< 0` check silently passed every real C-level
+        error through as success and only ever caught the None (no-handle) case.
         """
-        failed = result is None or (isinstance(result, int) and result < 0)
+        failed = result is None or (isinstance(result, int) and result != 0)
         if not failed:
             if self._write_failures:
                 log.info("device writes are landing again (after %d failed)",
@@ -812,7 +815,7 @@ class DeckController:
                                     res = dev.set_key_image_pil(index, img)
                                     self._note_write_result(res, index)
                                     ok = not (res is None
-                                              or (isinstance(res, int) and res < 0))
+                                              or (isinstance(res, int) and res != 0))
                                     if ok:
                                         pushed = True
                                     else:

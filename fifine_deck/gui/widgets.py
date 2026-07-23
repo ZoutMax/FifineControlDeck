@@ -862,6 +862,14 @@ class ActionEditor(QWidget):
                         "The key changed while the question was open, so "
                         "nothing was cleared. Select it again and retry.")
                     return
+        # Delete any keyring secret this key owned (a "type password" action, in
+        # its action, hold action, a multi-step, or a folder key) BEFORE we drop
+        # the references — otherwise the secret orphans in the keyring forever,
+        # since nothing else ever calls secret_store.delete.
+        from ..model import iter_key_secret_ids
+        from .. import secret_store
+        for sid in set(iter_key_secret_ids(self._kc)):
+            secret_store.delete(sid)
         default = KeyConfig()
         self._kc.label = default.label
         self._kc.icon = default.icon

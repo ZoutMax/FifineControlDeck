@@ -730,3 +730,22 @@ def test_stop_does_not_block_on_a_full_action_queue():
         assert done.wait(10), "stop() blocked on the full queue"
     finally:
         release.set()
+
+
+def test_a_positive_transport_error_counts_as_failure(caplog):
+    """TransportResult is c_uint32: 0 == success, non-zero == error. The old
+    `< 0` check never fired on an unsigned value, so a real C-level device
+    error (a positive TransportResult) was silently treated as a successful
+    write. The failure test must be `!= 0`."""
+    import logging
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+
+    c = DeckController(DeckConfig())
+    with caplog.at_level(logging.WARNING, logger="fifine_deck.controller"):
+        c._note_write_result(5, 4)             # a positive error code
+    assert c._write_failures == 1, "a positive TransportResult was read as success"
+    assert any("accepted no data" in r.message for r in caplog.records)
+    # and a subsequent 0 (success) resets it
+    c._note_write_result(0, 4)
+    assert c._write_failures == 0

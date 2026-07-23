@@ -603,3 +603,42 @@ def _page_loss_summary(page) -> str:
         bits.append(f"the folder '{name}'"
                     + (f" ({inner})" if inner else " (empty)"))
     return ", including ".join([bits[0], "; ".join(bits[1:])]) if folders else bits[0]
+
+
+def iter_key_secret_ids(kc):
+    """Yield every keyring secret_id a key owns — through its action, hold
+    action, any multi-step sub-actions, and any nested folder (recursively).
+
+    A "type password" action stores only a secret_id in the config; the secret
+    itself lives in the OS keyring. Removing the key must delete that secret or
+    it orphans in the keyring forever (secret_store.delete otherwise has no
+    production caller). Used by the GUI's Clear-key path.
+    """
+    def from_action(a):
+        if a is None:
+            return
+        if getattr(a, "type", None) == "password":
+            sid = a.params.get("secret_id")
+            if sid:
+                yield sid
+        for step in (a.params.get("steps") or []):
+            if isinstance(step, dict):
+                inner = step.get("action", step)
+                if isinstance(inner, dict) and inner.get("type") == "password":
+                    sid = (inner.get("params") or {}).get("secret_id")
+                    if sid:
+                        yield sid
+
+    seen = set()
+    stack = [kc]
+    while stack:
+        k = stack.pop()
+        if k is None:
+            continue
+        yield from from_action(getattr(k, "action", None))
+        yield from from_action(getattr(k, "hold_action", None))
+        folder = getattr(k, "folder", None)
+        if folder is not None and id(folder) not in seen:
+            seen.add(id(folder))
+            for pg in getattr(folder, "pages", []):
+                stack.extend(pg.keys.values())

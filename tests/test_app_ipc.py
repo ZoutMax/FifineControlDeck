@@ -155,3 +155,57 @@ def test_autostart_cli_reports_failure_when_the_change_never_lands(monkeypatch, 
 
     assert app.main() == 1, "reported success for a delegation that changed nothing"
     assert not entry.exists()
+
+
+def test_headless_persists_deck_driven_profile_and_brightness(monkeypatch, tmp_path):
+    """Confirmed audit finding: persistence lived only in the GUI, so brightness
+    and profile changes made from the deck in --headless were lost on restart.
+    run_headless must now wire the same save."""
+    import os as _os
+    import time as _time
+    from fifine_deck import app
+    from fifine_deck.model import DeckConfig
+
+    cfg = DeckConfig()
+    cfg.active_profile_id = "P1"
+    captured = {}
+
+    class _Stub:
+        def __init__(self, config):
+            self.config = config
+            self.on_brightness_changed = None
+            self.on_page_changed = None
+
+        def start(self):
+            captured["brightness"] = self.on_brightness_changed
+            captured["page"] = self.on_page_changed
+            return True
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(app, "DeckController", _Stub)
+    monkeypatch.setattr(app.DeckConfig, "load", classmethod(lambda cls: cfg))
+    monkeypatch.setattr(app, "ensure_dirs", lambda: None)
+    monkeypatch.setattr(app, "_acquire_instance_lock",
+                        lambda: _os.open(str(tmp_path / "lk"), _os.O_CREAT | _os.O_RDWR))
+    monkeypatch.setattr(app.signal, "signal", lambda *a, **k: None)
+    monkeypatch.setattr(_time, "sleep",
+                        lambda *_: (_ for _ in ()).throw(KeyboardInterrupt))
+
+    saves = []
+    monkeypatch.setattr(DeckConfig, "save",
+                        lambda self, path=None: saves.append(self.active_profile_id))
+
+    assert app.run_headless() == 0
+    assert "page" in captured, "headless never wired the deck callbacks"
+
+    captured["page"]()                       # no change -> must NOT save
+    assert saves == []
+    cfg.active_profile_id = "P2"             # deck switched profile
+    captured["page"]()
+    assert saves == ["P2"], "deck profile switch was not persisted"
+    saves.clear()
+    cfg.brightness = 42                      # deck changed brightness
+    captured["brightness"](42)
+    assert saves == ["P2"], "deck brightness change was not persisted"

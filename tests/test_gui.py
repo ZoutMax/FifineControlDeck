@@ -1718,3 +1718,50 @@ def test_deleting_a_page_the_deck_entered_a_folder_on_does_not_orphan_it(win, mo
     assert w.editor._kc is None or w.editor._kc in [
         kk for pg in root.pages for kk in pg.keys.values()], \
         "the editor is still bound to an orphaned key"
+
+
+def test_reordering_pages_while_deck_leaves_a_folder_does_not_crash(win, monkeypatch):
+    """Confirmed audit finding: _reorder_pages captures cont before its dialog's
+    nested event loop, during which the deck can navigate. Indexing cont.pages
+    by controller.page_index (which then belongs to a different container) crashed
+    with IndexError. Same class as _del_page."""
+    from fifine_deck.model import Page, Folder
+    w, cfg, c = win
+    root = cfg.active_profile()
+    root.pages += [Page(name="R2"), Page(name="R3"), Page(name="R4")]   # 4 root pages
+    fld = Folder(name="F", pages=[Page(name="F1"), Page(name="F2")])     # 2 folder pages
+    root.pages[3].key(2).action = mw.Action("open_folder", {})
+    root.pages[3].key(2).folder = fld
+    c.page_index = 3
+    c.enter_folder(fld)          # inside the folder; reorder's cont = the folder
+    c.page_index = 1
+    w._reload_pages()
+
+    class _FakeReorder:
+        def __init__(self, *a, **k): pass
+        def exec(self):
+            c.go_back()           # deck exits folder: page_index -> 3, but folder has 2 pages
+            return 1
+        def order(self):
+            return [1, 0]         # reverse the folder's two pages
+        def deleteLater(self): pass
+
+    monkeypatch.setattr(mw, "ReorderDialog", _FakeReorder)
+    w._reorder_pages()           # must not raise IndexError
+    assert [p.name for p in fld.pages] == ["F2", "F1"], "the folder was not reordered"
+
+
+def test_clearing_a_password_key_deletes_its_keyring_secret(win, monkeypatch):
+    """Confirmed audit finding: secret_store.delete had no production caller, so
+    removing a password key orphaned its secret in the keyring forever."""
+    from fifine_deck import secret_store
+    deleted = []
+    monkeypatch.setattr(secret_store, "delete", lambda sid: deleted.append(sid))
+    w, cfg, c = win
+    kc = cfg.active_profile().pages[0].key(1)
+    kc.action = mw.Action("password", {"secret_id": "pw-xyz"})
+    kc.hold_action = mw.Action("password", {"secret_id": "pw-hold"})
+    w.editor.set_key(kc, 1)
+    w.editor._clear_key()
+    assert "pw-xyz" in deleted and "pw-hold" in deleted, \
+        f"password secrets not deleted on clear: {deleted}"
