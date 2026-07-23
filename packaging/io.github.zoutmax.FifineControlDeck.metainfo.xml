@@ -46,17 +46,7 @@
   <releases>
     <release version="0.12.2" date="2026-07-23">
       <description>
-        <p>Five more fixes from the adversarial review: GPU keys recover after a hiccup, launched apps keep their environment on ordinary installs, volume step 0 is a no-op again, flaky-sensor graphs draw a line, and network readings roll over correctly</p>
-      </description>
-    </release>
-    <release version="0.12.1" date="2026-07-22">
-      <description>
-        <p>Fixes three defects introduced by 0.12.0: a config with one damaged profile is preserved again instead of emptied, delete-page deletes the page it asked about, and Clear key no longer silently fails after confirmation</p>
-      </description>
-    </release>
-    <release version="0.12.0" date="2026-07-22">
-      <description>
-        <p>Three audits: data-loss confirmations, backup slots that no longer overwrite each other, launched apps fixed on the AppImage and snap, and monitor keys that report a dead deck</p>
+        <p>Three audits of the action engine, the configuration model and the system-monitor sampler: confirmations before deleting a page or a folder key, config backups that no longer overwrite each other, apps launched from a key fixed on the AppImage and snap, monitor keys that report a dead deck, and several corrected readouts. Supersedes the withdrawn 0.12.0 and 0.12.1.</p>
       </description>
     </release>
     <release version="0.11.3" date="2026-07-22">

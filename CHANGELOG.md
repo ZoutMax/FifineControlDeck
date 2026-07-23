@@ -6,108 +6,44 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [0.12.2] - 2026-07-22
 
-Five more defects introduced by 0.12.0's monitor and launcher changes, found by
-finishing the same adversarial review that produced 0.12.1 and each reproduced
-against 0.12.1 before being fixed. All are in features that need specific
-hardware or an unusual environment, so most people never saw them; update anyway
-if you use GPU monitor keys or launch apps from a key.
-
-### Fixed
-- **A GPU, VRAM or GPU-temperature key recovers again after a hiccup.** 0.12.0
-  counted read failures across the whole session and never reset the count, so
-  twenty brief failures spread over days — a laptop's discrete GPU suspending,
-  a driver reset — permanently pinned the key to "n/a" until you restarted the
-  app. It now counts consecutive failures, so an isolated blip is forgotten on
-  the next good reading, while a genuinely stuck sensor still gives up rather
-  than retrying forever.
-- **Apps launched from a key keep their environment on ordinary installs.**
-  0.12.0 decided it was running from a bundle by looking for two very common
-  environment variables, so a normal `.deb`, PPA or source install that
-  happened to have either set could strip a launched program's library and
-  module paths and make it fail. The bundle is now recognised by a marker only
-  the AppImage and snap set.
-- **A volume key with a step of 0 does nothing again**, instead of nudging the
-  volume by 1% on every press.
-- **A monitor graph fed by a sensor that reports on alternate ticks shows a
-  line again** instead of an empty box.
-- **Network readings are narrower and roll over correctly.** A rate just under
-  a megabyte now shows "1.0 MB/s" rather than "1000.0 kB/s", and kilobyte
-  readings dropped a digit, so the value on a network key is drawn at full size
-  again.
-
-## [0.12.1] - 2026-07-22
-
-Fixes three defects introduced by 0.12.0 itself, found by an adversarial review
-of that release and each reproduced before being fixed. If you are on 0.12.0,
-update.
-
-### Fixed
-- **A configuration with one damaged profile is preserved again instead of
-  being quietly emptied.** 0.12.0 relaxed the check that decides whether a
-  config file is readable, so a file whose second profile had a damaged page
-  list would load: that profile came back with a single blank page, and the
-  next save wrote the result over your file with no copy kept anywhere. 0.11.3
-  had set such a file aside as `config.json.corrupt`, intact and recoverable.
-  The stricter check is back. Being handed a fresh configuration with the old
-  one safe beside it is an inconvenience; losing a profile's contents with no
-  copy is not, and the trade was the wrong way round.
-- **Deleting a page now deletes the page it asked you about.** The new
-  confirmation left a window in which a key press on the deck could move which
-  page was current, and the deletion used the new position: confirming
-  "Delete 'P2'?" while pressing a page key could remove P3 instead. Coming back
-  out of a folder during the same prompt could also make the deletion fail
-  silently. The page is now identified by which page it is, not by where it sat.
-- **"Clear key" no longer does nothing after you confirm it.** If a page or
-  profile change arrived from the deck while its confirmation was open, the key
-  was deselected underneath it and clearing then failed with nothing on screen
-  to say so. It now says the key changed and asks you to try again.
-
-## [0.12.0] - 2026-07-22
-
 From three independent audits: the action engine, the configuration model, and
-the system-monitor sampler. Nothing here was reported by a user, and none of it
-is a regression from 0.11.x.
+the system-monitor sampler. Nothing here was reported by a user. (0.12.0 and
+0.12.1 were withdrawn after they shipped with regressions of their own; this
+release supersedes them and is the one to install.)
 
 ### Fixed — data you could lose
 - **Deleting a page now asks first, and says what it will take.** The "–" button
   is a small square beside "+" and "⇅", and one misclick destroyed every key on
   the page plus any folder hanging off it, at unlimited depth, with an autosave
-  600 ms later and no undo. Deleting a profile has always asked. The
-  confirmation counts what would go, walked through every nested level. An
-  untouched page still deletes without a prompt.
+  600 ms later and no undo. Deleting a profile has always asked. The confirmation
+  counts what would go, walked through every nested level, and deletes the page
+  it named — not whatever page a deck key press moved to while the prompt was
+  open. An untouched page still deletes without a prompt.
 - **"Clear key" now asks before deleting a folder.** It still clears the folder,
   which is right: a blank key that silently resurrects old pages when a folder
   action is dropped on it later would be worse. But what a folder holds is
   invisible from that panel, and the button reads as blanking a key face.
 - **Importing a configuration can no longer destroy your backup.** The backup
   went to a fixed `config.json.bak`, so importing twice overwrote the copy of
-  the configuration you actually built. Backups now take the next free slot.
-  The same fixed-name problem, and the same fix, applies to the `.corrupt` copy
-  kept when a config cannot be read, and to the `.v<N>` copy kept when one comes
-  from a newer version.
-- **A failed backup now cancels the import.** The dialog promises a backup, then
-  the failure was swallowed and your configuration replaced anyway. The dialog
-  also names the file it is about to write, and the import's own save is
-  reported if it fails instead of leaving the screen and the disk disagreeing.
+  the configuration you actually built. Backups now take the next free slot —
+  as does the `.corrupt` copy kept when a config cannot be read, and the `.v<N>`
+  copy kept when one comes from a newer version. A backup that fails to write now
+  cancels the import instead of replacing your configuration anyway.
 - **A setting this version does not recognise survives an unrelated edit.** A
   key's action parameters were rebuilt from what this build knows, so a newer
   version's option was destroyed simply by renaming the key. Sync a config
   between two machines on different versions and one rename was enough.
-- **One hand-edited profile no longer discards the whole file.** A single
-  profile missing its `pages` sent every other profile, plus brightness and
-  glow, to `.corrupt` and replaced them with defaults.
 
 ### Fixed — things that failed silently
 - **Apps launched from a key now start on the AppImage and snap builds.** Those
-  two launchers point `PYTHONHOME`, `LD_LIBRARY_PATH` and `QT_PLUGIN_PATH`
-  inside the bundle so the app finds its own Python and Qt, and every program a
-  key launched inherited them. A host `python3` handed our `PYTHONHOME` looks
-  for its standard library in our bundle and dies with "No module named
-  'encodings'" before running a line, so a key bound to anything written in
-  Python, such as `meld`, `virt-manager`, `solaar` or your own scripts, did
-  nothing at all. The launchers now save the host's real values first and the
-  app restores them for every program it runs, including the helper tools. The
-  `.deb`, PPA and source installs were never affected and are unchanged.
+  two launchers point `PYTHONHOME`, `LD_LIBRARY_PATH` and `QT_PLUGIN_PATH` inside
+  the bundle so the app finds its own Python and Qt, and every program a key
+  launched inherited them — a host `python3` handed our `PYTHONHOME` dies with
+  "No module named 'encodings'" before running a line, so a key bound to `meld`,
+  `virt-manager`, `solaar` or your own scripts did nothing. The launchers now
+  save the host's real values and the app restores them for every program it
+  runs, including the helper tools. The `.deb`, PPA and source installs are
+  unaffected.
 - **A knob gesture set to "Open folder" no longer does nothing silently.** A
   folder belongs to a key, and a knob has nowhere to hold one, so the action was
   dispatched and dropped. It is no longer offered for knobs; "Back out of
@@ -117,22 +53,18 @@ is a regression from 0.11.x.
 - **A negative volume step no longer kills the key.** "Step %" is a free text
   field; a value like `-20` built an argument that `wpctl` read as a
   command-line flag, so the key silently did nothing. The step is now clamped to
-  1-100.
+  0–100, and a step of 0 is left as a deliberate no-op.
 - **A hand-edited step delay can no longer abandon the rest of a multi-action.**
   A delay beyond what the clock can represent raised an error that dropped every
-  later step. Delays are clamped to the 30 s the editor already allows, and a
-  clamped delay says so in the log, noting that the deck cannot answer any other
-  key while it waits.
+  later step. Delays are clamped to the 30 s the editor already allows.
 - **A dead deck is no longer invisible on a page of monitor keys.** Monitor keys
   ignored whether the device accepted the picture, so once the connection died
-  they kept "updating" a deck that received nothing, while the window showed
-  live values. They now check, and so does the retry: a write the device
-  rejected used to leave a record claiming the key already showed that picture,
-  which froze the key until its content happened to change.
+  they kept "updating" a deck that received nothing, while the window showed live
+  values. They now check, and a write the device rejects is retried instead of
+  leaving the key frozen.
 - **An unreadable configuration no longer stops the app from appearing.** It was
   reported only as a crash message on a stream nobody sees when the app is
-  launched from the menu. It now says what could not be read and changes
-  nothing.
+  launched from the menu. It now says what could not be read and changes nothing.
 
 ### Fixed — things that read the wrong number
 - **A network key measured local traffic.** With no interface chosen it summed
@@ -142,13 +74,14 @@ is a regression from 0.11.x.
   double-counted the same way. It now counts physical interfaces only.
 - **A network key coming back after a while no longer invents a spike.** Switch
   pages for ten minutes and the first reading on return was the average over the
-  whole absence, five megabytes a second when nothing was moving, which also
-  flattened the graph for the next half-minute. A gap now reads as a gap.
-- **Small sizes are no longer rounded into nonsense.** 1500 bytes showed as
-  "2 kB", and 999999 as "1000 kB" instead of rolling over to MB.
-- **A graph key's gaps are drawn as gaps.** Missing samples were squeezed out,
-  so two readings fifteen seconds apart were joined by a line implying
-  measurements that never happened.
+  whole absence, five megabytes a second when nothing was moving. A gap now reads
+  as a gap.
+- **Network rates roll over to megabytes.** A rate just under a megabyte showed
+  "1000 kB/s" rather than "1.0 MB/s".
+- **A monitor graph draws gaps as gaps.** Missing samples were squeezed out, so
+  two readings fifteen seconds apart were joined by a line implying measurements
+  that never happened; and a sensor that reports on alternate ticks now shows its
+  readings instead of an empty box.
 
 ### Changed
 - **The deck stays responsive while a long macro runs.** Key presses made during
@@ -156,8 +89,8 @@ is a regression from 0.11.x.
   past a sensible backlog they are now declined, with a line in the log saying
   why.
 - **An idle graph key stops rewriting the same picture** to the deck several
-  times a second, and a GPU reading that cannot be taken now gives up instead of
-  retrying twice a second forever.
+  times a second, and a GPU, VRAM or temperature reading that cannot be taken now
+  settles instead of retrying forever, while still recovering from a brief hiccup.
 
 ## [0.11.3] - 2026-07-22
 
