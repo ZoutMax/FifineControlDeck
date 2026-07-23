@@ -803,7 +803,8 @@ class DeckController:
                                 # an exception: set_key_image_stream returns
                                 # None when the transport has no handle (it
                                 # returns early and writes nothing) and a
-                                # negative int on a C error. Discarding it here
+                                # non-zero TransportResult on a C error (the
+                                # result is unsigned, so 0 == success). Discarding it here
                                 # meant a dead handle stamped _monitor_state,
                                 # the unchanged-signature fast path then
                                 # suppressed every retry, and the GUI kept
