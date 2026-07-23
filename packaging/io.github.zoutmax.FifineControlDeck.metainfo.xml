@@ -44,6 +44,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.12.3" date="2026-07-23">
+      <description>
+        <p>Fixes a folder being stranded when its page is deleted while the deck navigated into it during the confirmation</p>
+      </description>
+    </release>
     <release version="0.12.2" date="2026-07-23">
       <description>
         <p>Three audits of the action engine, the configuration model and the system-monitor sampler: confirmations before deleting a page or a folder key, config backups that no longer overwrite each other, apps launched from a key fixed on the AppImage and snap, monitor keys that report a dead deck, and several corrected readouts. Supersedes the withdrawn 0.12.0 and 0.12.1.</p>
