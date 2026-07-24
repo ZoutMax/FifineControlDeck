@@ -1,3 +1,20 @@
+fifine-control-deck (0.12.7) noble; urgency=medium
+
+  * The key editor no longer crashes, or silently drops your edit, if the deck
+    switches page or profile while you are editing a key
+  * Switching pages no longer leaves a stale animation frame lit on a key
+  * Importing a configuration now keeps the "Sleep deck with the screen"
+    setting instead of discarding it
+  * Animated keys and system-monitor keys on the same page can no longer
+    corrupt each other on the display (device writes are now serialised)
+  * A password key's stored secret is removed from the keyring when its action
+    type is changed away, instead of being left orphaned
+  * Five fixes from a six-lens architecture audit (GUI, rendering, animation,
+    the device transport, and configuration), each reproduced before it was
+    fixed and hardware-validated on the deck
+
+ -- ZoutMax <150600436+ZoutMax@users.noreply.github.com>  Fri, 24 Jul 2026 23:26:41 +0200
+
 fifine-control-deck (0.12.6ppa1) resolute; urgency=medium
 
   * Build for resolute (25.04). No source changes from 0.12.6.

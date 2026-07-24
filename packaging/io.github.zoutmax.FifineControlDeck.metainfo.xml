@@ -44,6 +44,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.12.7" date="2026-07-24">
+      <description>
+        <p>Five fixes from a six-lens architecture audit, each reproduced before it was fixed and hardware-validated on the deck: the key editor no longer crashes if the deck changes page while you edit a key; switching pages no longer leaves a stale animation frame on a key; importing a configuration keeps the "Sleep deck with the screen" setting; animated keys and system-monitor keys on the same page can no longer corrupt each other on the display; and a password key's stored secret is removed from the keyring when its action type is changed away.</p>
+      </description>
+    </release>
     <release version="0.12.6" date="2026-07-24">
       <description>
         <p>The deck now blanks when the screen blanks and lights up again when it wakes, controlled by a "Sleep deck with the screen" toggle in the menu. Importing a config now warns first when it contains keys that run a shell command or launch a program, so a shared config cannot hide an executable behind an innocent label, and a malformed or hostile config can no longer crash the import.</p>

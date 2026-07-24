@@ -4,6 +4,30 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.12.7] - 2026-07-24
+
+Five fixes from a six-lens architecture audit (the GUI, rendering, animation,
+the device transport, and configuration), each reproduced before it was fixed
+and hardware-validated on the deck.
+
+### Fixed
+- **The key editor no longer crashes if the deck changes page while you edit.**
+  Editing a password key could open a modal warning, and if the deck switched
+  page or profile while it was open the key was deselected underneath the
+  editor; dismissing the warning then crashed the edit and lost it. The editor
+  now re-checks the selection after the warning.
+- **Switching pages no longer strands a stale animation frame on a key.** The
+  animation worker could paint one more frame after a page switch had already
+  repainted a key static, leaving the old frame lit until the key was next
+  touched. The worker now re-checks that a key is still animated before writing.
+- **Importing a configuration keeps the "Sleep deck with the screen" setting.**
+  It was being dropped on import, which also re-saved the old value to disk.
+- **Animated keys and system-monitor keys on the same page can no longer
+  corrupt each other on the display.** Their device writes could interleave on
+  the wire; device writes are now serialised so each completes as a unit.
+- **A password key's stored secret is cleaned from the keyring when its action
+  type is changed away.** It was previously left orphaned in the OS keyring.
+
 ## [0.12.6] - 2026-07-24
 
 ### Added
