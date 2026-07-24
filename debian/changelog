@@ -1,3 +1,10 @@
+fifine-control-deck (0.12.5) noble; urgency=medium
+
+  * Fixes an unrecoverable startup crash when config.json contains an
+    infinite number (Infinity/1e999) in brightness or version
+
+ -- ZoutMax <150600436+ZoutMax@users.noreply.github.com>  Fri, 24 Jul 2026 17:08:51 +0200
+
 fifine-control-deck (0.12.4) noble; urgency=medium
 
   * Five fixes from a whole-codebase architecture audit: real device
