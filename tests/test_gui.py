@@ -574,6 +574,24 @@ def test_icon_still_follows_a_changed_action(qapp):
     assert kc.icon == assets.library_ref("mute")
 
 
+def test_on_edit_survives_deselect_during_nested_modal(qapp):
+    """get_action() can open a modal (the once-per-session plaintext-password
+    warning when no keyring exists) whose nested event loop lets a deck page
+    change deselect the key (_kc -> None) mid-edit. _on_edit must re-validate
+    after get_action() rather than AttributeError on _kc and drop the edit.
+    (maximum-audit regression)"""
+    from fifine_deck.model import Action
+    ed, kc = _editor_with_key("launch_app", {"command": "obs"}, "home")
+
+    def deselecting_get_action():
+        ed._kc = None                  # a deck page switch deselected us mid-modal
+        return Action("launch_app", {"command": "obs"})
+
+    ed.params.get_action = deselecting_get_action
+    ed._on_edit()                      # pre-fix: AttributeError: NoneType has no 'label'
+    assert ed._kc is None              # stayed deselected; the edit was cleanly skipped
+
+
 def test_custom_file_icon_is_never_auto_replaced(qapp, tmp_path):
     from fifine_deck.gui.widgets import ActionEditor
     from fifine_deck.model import KeyConfig, Action
@@ -865,6 +883,26 @@ def test_import_preserves_snap_hint_dismissed(win, monkeypatch, tmp_path):
     _AutoBox.answer = QMessageBox.StandardButton.Yes
     w._import_config()
     assert cfg.snap_hint_dismissed is True
+
+
+def test_import_preserves_sleep_with_screen(win, monkeypatch, tmp_path):
+    """The import in-place copy must carry sleep_with_screen; it was omitted, so
+    an imported config's setting was discarded, the OLD value was re-saved to
+    disk (lossy export->import), and live deck blanking used the wrong boolean.
+    Also re-sync the menu action. (maximum-audit regression)"""
+    import json as _json
+    w, cfg, c = win
+    assert cfg.sleep_with_screen is True          # default
+    donor = DeckConfig()
+    donor.sleep_with_screen = False
+    path = tmp_path / "donor.json"
+    path.write_text(_json.dumps(donor.to_dict()))
+    monkeypatch.setattr(mw.QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(path), "")))
+    _AutoBox.answer = QMessageBox.StandardButton.Yes
+    w._import_config()
+    assert cfg.sleep_with_screen is False         # imported value applied
+    assert w.sleep_act.isChecked() is False        # ...and the menu re-synced
 
 
 def test_double_click_created_folder_is_queued_for_save(win):

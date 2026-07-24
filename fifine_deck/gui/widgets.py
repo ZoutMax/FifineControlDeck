@@ -922,8 +922,17 @@ class ActionEditor(QWidget):
     def _on_edit(self, *_):
         if self._building or self._kc is None:
             return
+        kc = self._kc                       # the key selected as this edit began
         from ..actions import default_icon_for
         new_action = self.params.get_action()
+        # get_action() can open a modal (the once-per-session plaintext-password
+        # warning when no keyring backend exists), and its nested event loop lets
+        # a deck-driven page/profile change deselect the key underneath us
+        # (_kc -> None) or select a different one. Applying this edit then either
+        # AttributeErrors on _kc or writes to the wrong key — so re-validate,
+        # like the sibling _clear_key / _apply_picked_icon paths already do.
+        if self._kc is None or self._kc is not kc:
+            return
         prev_action = self._last_action
         self._last_action = new_action
         self._last_action_sig = self._action_sig(new_action)

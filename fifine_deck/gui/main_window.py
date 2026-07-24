@@ -318,6 +318,7 @@ class MainWindow(QMainWindow):
         # reference.
         self.config.brightness = imported.brightness
         self.config.glow = imported.glow
+        self.config.sleep_with_screen = imported.sleep_with_screen
         self.config.snap_hint_dismissed = imported.snap_hint_dismissed
         self.config.profiles = imported.profiles
         self.config.active_profile_id = imported.active_profile_id
@@ -327,6 +328,7 @@ class MainWindow(QMainWindow):
         # report success, and be dropped on the next save.
         self.controller.reset_nav()
         self.glow_act.setChecked(self.config.glow)
+        self.sleep_act.setChecked(self.config.sleep_with_screen)
         self.bright.setValue(self.config.brightness)
         self._reload_profiles()
         self._rebuild_grid()

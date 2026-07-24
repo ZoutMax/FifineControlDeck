@@ -589,14 +589,30 @@ class GifController:
                         )
 
             if frames_to_update:
+                wrote = False
                 for index, frame_data, width, height, x, y, fb_layer in frames_to_update:
+                    # Re-check membership just before the write. Frames are
+                    # collected under _lock above, but written here with the lock
+                    # released; between the two, clear_key_gif() — e.g. a page
+                    # switch through DeckController.render_page — can remove this
+                    # key from _gif_map. Writing the stale frame anyway strands an
+                    # old animation frame on a key the switch just repainted
+                    # static (and _gif_map no longer drives a repaint, so it stays
+                    # lit until the key is next touched). The background layer is
+                    # exempt: it is not a per-key face and is cleared separately.
+                    if index != self._BACKGROUND_INDEX:
+                        with self._lock:
+                            if index not in self._gif_map:
+                                continue
                     if index == self._BACKGROUND_INDEX:
                         self._device.transport.set_background_frame_stream(
                             frame_data, width, height, x, y, fb_layer
                         )
                     else:
                         self._device.transport.set_key_image_stream(frame_data, index)
-                self._device.refresh()
+                    wrote = True
+                if wrote:
+                    self._device.refresh()
 
             time.sleep(0.003)
 
