@@ -1,3 +1,9 @@
+fifine-control-deck (0.12.7ppa1) resolute; urgency=medium
+
+  * Build for resolute (25.04). No source changes from 0.12.7.
+
+ -- ZoutMax <150600436+ZoutMax@users.noreply.github.com>  Fri, 24 Jul 2026 23:35:28 +0200
+
 fifine-control-deck (0.12.7) noble; urgency=medium
 
   * The key editor no longer crashes, or silently drops your edit, if the deck
