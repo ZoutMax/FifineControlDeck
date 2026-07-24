@@ -1,3 +1,9 @@
+fifine-control-deck (0.12.8ppa1) resolute; urgency=medium
+
+  * Build for resolute (25.04). No source changes from 0.12.8.
+
+ -- ZoutMax <150600436+ZoutMax@users.noreply.github.com>  Sat, 25 Jul 2026 00:28:49 +0200
+
 fifine-control-deck (0.12.8) noble; urgency=medium
 
   * Hotkeys using named or symbol keys (Escape, Delete, Page Up/Down, ".",
