@@ -534,7 +534,11 @@ def execute(action, context: ActionContext | None = None) -> None:
         elif t == "prev_page" and context:
             context.prev_page()
         elif t == "goto_page" and context:
-            context.goto_page(int(p.get("page", "1")) - 1)
+            try:
+                _page = int(float(str(p.get("page", "1")).strip().replace(",", ".")))
+            except (TypeError, ValueError):
+                _page = 1        # a bad value must not silently drop the action
+            context.goto_page(_page - 1)
         elif t == "switch_profile" and context:
             context.switch_profile(p.get("profile_id", ""))
         elif t == "brightness" and context:
@@ -543,7 +547,16 @@ def execute(action, context: ActionContext | None = None) -> None:
             # falsy — so "brightness set 0" silently became 10. Only a missing
             # or blank value takes the default.
             raw = p.get("value", "10")
-            val = int(raw) if str(raw).strip() not in ("", "None") else 10
+            if str(raw).strip() in ("", "None"):
+                val = 10
+            else:
+                try:
+                    # Guard + accept a comma decimal (fr_FR): unlike _volume,
+                    # this had no local guard, so any non-integer text escaped
+                    # to the outer catch and the key became a silent no-op.
+                    val = int(float(str(raw).strip().replace(",", ".")))
+                except (TypeError, ValueError):
+                    val = 10
             if mode == "set":
                 context.set_brightness(val)
             elif mode == "up":

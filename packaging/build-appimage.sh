@@ -80,8 +80,13 @@ PYHOME="$APPDIR/opt/python${PY_VER}"
 SP="$PYHOME/lib/python${PY_VER}/site-packages"
 
 echo ">> installing runtime dependencies"
+# keyring: without it "Type password" keys fall back to storing the secret in
+#   plaintext in config.json (the .deb Recommends it, the snap bundles it).
+# pynvml: without it GPU/VRAM/GPU-temp monitor keys read n/a on NVIDIA (the .deb
+#   Recommends python3-pynvml, the snap bundles it). The bundle can't reach a
+#   host-installed copy (AppRun clears the host PYTHONPATH), so ship them here.
 "$PYHOME/bin/python${PY_VER}" -m pip install --quiet --no-warn-script-location \
-    PyQt6 Pillow psutil pyudev
+    PyQt6 Pillow psutil pyudev keyring pynvml
 
 echo ">> pruning Qt to what we actually import"
 python3 "$HERE/packaging/appimage-prune.py" "$SP"

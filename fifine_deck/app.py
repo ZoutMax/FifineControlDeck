@@ -125,11 +125,25 @@ _AUTOSTART_ENTRY = """[Desktop Entry]
 Type=Application
 Name=fifine Control Deck
 Comment=Keep the deck active on login (window hidden)
-Exec=fifine-control-deck --hidden
+Exec={exec}
 Icon=fifine-control-deck
 Terminal=false
 X-GNOME-Autostart-enabled=true
 """
+
+
+def _autostart_exec() -> str:
+    """The Exec line for the autostart entry.
+
+    An AppImage installs nothing on PATH — it is launched by its own path,
+    exported as $APPIMAGE. Writing the static `fifine-control-deck` command
+    there produced a dangling Exec that failed command-not-found on login,
+    silently, while the UI reported autostart was ON. Inside the bundle, point
+    at $APPIMAGE; the .deb (/usr/bin) and snap (/snap/bin) keep the PATH command.
+    """
+    if os.environ.get("FIFINE_IN_BUNDLE") == "1" and os.environ.get("APPIMAGE"):
+        return f"{os.environ['APPIMAGE']} --hidden"
+    return "fifine-control-deck --hidden"
 
 
 def set_autostart(enable: bool, config=None) -> int:
@@ -140,7 +154,7 @@ def set_autostart(enable: bool, config=None) -> int:
     if enable:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
-            f.write(_AUTOSTART_ENTRY)
+            f.write(_AUTOSTART_ENTRY.format(exec=_autostart_exec()))
         print(f"Autostart enabled: {path}")
         print("The deck will run (hidden) on login; open the window by launching the app.")
     else:

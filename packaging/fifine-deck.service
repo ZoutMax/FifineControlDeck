@@ -3,9 +3,12 @@ Description=fifine Control Deck (Linux) — key daemon
 After=graphical-session.target
 
 [Service]
-# Adjust the path if you cloned elsewhere.
-ExecStart=/usr/bin/python3 -m fifine_deck --headless
-WorkingDirectory=%h/FifineControlDeck
+# Uses the installed launcher, which sets PYTHONPATH for the packaged module
+# (.deb/PPA install it under /usr/lib/fifine-control-deck, not on sys.path).
+# Running from a git clone instead? Use these two lines:
+#   ExecStart=/usr/bin/python3 -m fifine_deck --headless
+#   WorkingDirectory=%h/FifineControlDeck
+ExecStart=/usr/bin/fifine-control-deck --headless
 Restart=on-failure
 RestartSec=2
 # Give wpctl / playerctl / xdg-open the right session bus + display.

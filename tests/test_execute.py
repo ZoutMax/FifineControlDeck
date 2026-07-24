@@ -174,6 +174,23 @@ def test_hotkey_ydotool_covers_punctuation_and_high_f_keys():
             f"{k} still missing from _KEYCODES"
 
 
+def test_brightness_and_goto_page_accept_comma_and_guard_bad_values():
+    """fr_FR users type a comma decimal, and these two had no local guard, so a
+    comma or any non-number made the key a silent no-op (the value escaped to
+    the outer catch-all and the context call never ran). (never-checked-audit)"""
+    ctx = Ctx()
+    actions.execute(Action("brightness", {"mode": "set", "value": "50"}), ctx)
+    actions.execute(Action("brightness", {"mode": "set", "value": "0,5"}), ctx)   # comma
+    actions.execute(Action("brightness", {"mode": "set", "value": "oops"}), ctx)  # bad
+    actions.execute(Action("goto_page", {"page": "3,0"}), ctx)                    # comma
+    actions.execute(Action("goto_page", {"page": "nope"}), ctx)                   # bad
+    assert ("set_brightness", 50) in ctx.calls
+    assert ("set_brightness", 0) in ctx.calls           # "0,5" parsed, not dropped
+    assert ("set_brightness", 10) in ctx.calls          # bad value -> default, NOT a no-op
+    assert ("goto_page", 2) in ctx.calls                # "3,0" -> page 3 -> 0-based 2
+    assert ("goto_page", 0) in ctx.calls                # bad -> page 1 -> 0-based 0
+
+
 # -- deck-side actions are delegated to the context --------------------------
 
 @pytest.mark.parametrize("t", ["next_page", "prev_page", "next_profile",

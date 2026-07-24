@@ -16,15 +16,21 @@ permissions:
 jobs:
   # The tests-on-push workflow does not fire on tag pushes, so without this
   # gate a tag on a broken commit publishes broken .debs to releases/latest.
-  # One Python version is enough here — the matrix already ran on the branch.
+  # Run the SAME 3.10-3.13 matrix the branch does: the .deb declares
+  # python3 (>= 3.10), and release.sh pushes main+tag together so the branch
+  # matrix for this SHA is still in flight when release publishes — a
+  # 3.10/3.11/3.12-only defect would otherwise ship to PPA users past this gate.
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v5
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install system libraries (Qt runtime + libudev for the transport .so)
         run: |
@@ -71,6 +77,20 @@ jobs:
         run: |
           appstreamcli validate packaging/*.metainfo.xml
           desktop-file-validate packaging/*.desktop
+
+      # The shipped .deb version comes from the TAG (below), but its bundled
+      # metainfo.xml ships verbatim from the tree. A hand-made / re-tag that
+      # skips release.sh's `dch` would publish a .deb labelled with the tag whose
+      # metainfo still advertises the old version — invisibly. Assert they agree.
+      - name: Tag matches debian/changelog
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          CHLOG="$(dpkg-parsechangelog -l debian/changelog -S Version | sed -E 's/(ppa[0-9]+|~.*)$//')"
+          if [ "$TAG" != "$CHLOG" ]; then
+            echo "::error::release tag v$TAG does not match debian/changelog version $CHLOG"
+            exit 1
+          fi
+          echo "tag v$TAG matches changelog $CHLOG"
 
       - name: Build .deb (amd64 + arm64)
         run: |

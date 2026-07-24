@@ -108,7 +108,9 @@ class MonitorSpec:
         if style not in STYLES:
             style = "number"
         try:
-            interval = float(str(p.get("interval", "") or "1").strip())
+            # Accept a comma decimal too: a fr_FR user types "0,5", and a bare
+            # float() would reject it and silently fall back to 1.0s.
+            interval = float(str(p.get("interval", "") or "1").strip().replace(",", "."))
         except (TypeError, ValueError):
             interval = 1.0
         interval = max(0.5, min(60.0, interval))

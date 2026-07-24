@@ -1440,79 +1440,60 @@ def test_the_sparkline_leaves_gaps_where_samples_are_missing():
     render_monitor(100, spec, Reading(None, "…"), [None] * 32)
 
 
-def test_a_gpu_backend_recovers_after_isolated_read_blips(monkeypatch):
+def test_monitor_interval_accepts_comma_decimal():
+    """fr_FR users type '0,5'; a bare float() rejects the comma and silently
+    fell back to the 1.0s default, so the key refreshed at the wrong rate with
+    no error. (never-checked-audit — primary user is on a French locale)"""
+    assert MonitorSpec.from_params({"metric": "cpu", "interval": "0,5"}).interval == 0.5
+    assert MonitorSpec.from_params({"metric": "cpu", "interval": "2,5"}).interval == 2.5
+    # a genuinely bad value still falls back cleanly
+    assert MonitorSpec.from_params({"metric": "cpu", "interval": "x"}).interval == 1.0
+
+
+def test_a_gpu_backend_recovers_after_isolated_read_blips(monkeypatch, tmp_path):
     """0.12.0 regression: the read-failure counter never reset on success, so
     20 blips ANYWHERE in the process lifetime pinned the key to n/a forever.
-    0.11.3 recovered indefinitely. It must count CONSECUTIVE failures."""
-    state = {"fail": False}
+    0.11.3 recovered indefinitely. It must count CONSECUTIVE failures.
 
-    class _Backend:
-        def read(self):
-            if state["fail"]:
-                raise RuntimeError("EIO")
-            return 42
-
-    def probe(final=False):
-        return ("amdgpu", _Backend())
-
-    monkeypatch.setattr(monitors, "_probe_vram", probe)
+    Drives the REAL _sample_vram (amdgpu path: two sysfs-style files) via the
+    probe, so the shipped success reset (_gpu_read_ok, monitors.py:476) is
+    actually executed — deleting that line now fails this test."""
+    used = tmp_path / "used"
+    total = tmp_path / "total"
+    total.write_text("100")
+    # The probe just returns the (cached) sysfs-style paths; the read itself
+    # succeeds or fails purely by what the `used` file holds this tick — so a
+    # blip hits the CACHED backend (int("") raises inside the real _sample_vram),
+    # exactly like a transient sysfs read error.
+    monkeypatch.setattr(monitors, "_probe_vram",
+                        lambda final=False: ("amdgpu", str(used), str(total)))
     s = Sampler()
     spec = MonitorSpec.from_params({"metric": "vram"})
 
-    # patch _sample_vram's read to go through our backend object
-    def fake_read(self, spec):
-        b = self._resolve_gpu_backend("_vram_backend", monitors._probe_vram,
-                                      "_vram_retries")
-        if b[0] not in ("nvml", "amdgpu"):
-            return Reading(None, "n/a", "no dedicated GPU", ok=False)
-        try:
-            v = b[1].read()
-        except Exception:
-            self._gpu_read_failed("_vram_backend", "_vram_retries")
-            raise
-        self._gpu_read_ok("_vram_backend")
-        return Reading(float(v), f"{v}%", "", sample=float(v))
-
-    monkeypatch.setattr(Sampler, "_sample_vram", fake_read)
-
     # 30 isolated blips, each fully recovered afterwards
     for cycle in range(30):
-        state["fail"] = True
-        s.sample(spec)                       # one failure -> backend dropped
-        state["fail"] = False
-        r = s.sample(spec)                   # must recover
+        used.write_text("")                  # blip: this read fails
+        s.sample(spec)
+        used.write_text("42")                # recovered
+        r = s.sample(spec)                   # success -> real _gpu_read_ok resets
         assert r.ok and r.pct == 42.0, f"did not recover on cycle {cycle}: {r.text}"
     assert s._vram_backend != ("none",), "the key was permanently killed"
 
 
-def test_a_gpu_backend_still_settles_on_consecutive_failures(monkeypatch):
+def test_a_gpu_backend_still_settles_on_consecutive_failures(monkeypatch, tmp_path):
     """The genuinely-stuck case (NVML after a Xid error) must still give up,
-    so it does not re-probe forever leaking init refcounts."""
-    class _Dead:
-        def read(self):
-            raise RuntimeError("GPU is lost")
-
-    monkeypatch.setattr(monitors, "_probe_vram", lambda final=False: ("amdgpu", _Dead()))
-
-    def fake_read(self, spec):
-        b = self._resolve_gpu_backend("_vram_backend", monitors._probe_vram, "_vram_retries")
-        if b[0] not in ("nvml", "amdgpu"):
-            return Reading(None, "n/a", "gone", ok=False)
-        try:
-            b[1].read()
-        except Exception:
-            self._gpu_read_failed("_vram_backend", "_vram_retries")
-            raise
-        return Reading(1.0, "1%")
-
-    monkeypatch.setattr(Sampler, "_sample_vram", fake_read)
+    so it does not re-probe forever leaking init refcounts. Also through the
+    real _sample_vram (its except -> _gpu_read_failed)."""
+    used = tmp_path / "used"
+    total = tmp_path / "total"
+    total.write_text("100")
+    used.write_text("")                       # every read fails (int("") raises)
+    monkeypatch.setattr(monitors, "_probe_vram",
+                        lambda final=False: ("amdgpu", str(used), str(total)))
     s = Sampler()
     spec = MonitorSpec.from_params({"metric": "vram"})
     for _ in range(25):
-        try:
-            s.sample(spec)
-        except Exception:
-            pass
+        s.sample(spec)                        # sample() swallows the read error
     assert s._vram_backend == ("none",), "never settled on 20 consecutive failures"
 
 
