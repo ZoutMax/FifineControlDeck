@@ -4,6 +4,31 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.12.6] - 2026-07-24
+
+### Added
+- **The deck now sleeps with the screen.** When the monitor blanks, the deck
+  goes dark; when the screen wakes, the deck lights back up and redraws. A
+  "Sleep deck with the screen" toggle in the menu turns it off (it is on by
+  default). It follows the desktop's own screen-blank signal, so it matches
+  whatever blank/lock timeout the session already uses.
+- **Importing a config now warns when it contains keys that run commands.** A
+  config shared on a forum or synced from elsewhere can hide a key that runs a
+  shell command or launches a program behind an innocent label and icon, and it
+  fires the moment the key is pressed. The import now lists those keys first and
+  asks for confirmation, so nothing executable is accepted unseen. Importing
+  such content is still supported; it is a heads-up, not a block.
+
+### Fixed
+- **A malformed or hostile config can no longer crash the import.** The scan
+  that powers the warning above walked an action's steps assuming they were
+  always well-formed; a hand-edited or hostile config with an unexpected shape
+  (for example a non-list `steps`) could raise instead of warning, aborting the
+  import on exactly the kind of file the warning exists to vet. The scan is now
+  tolerant of any shape and, as a bonus, also reports a command hidden inside a
+  nested multi-step. The same hardening covers the clear-key path that removes a
+  key's stored passwords.
+
 ## [0.12.5] - 2026-07-24
 
 ### Fixed
