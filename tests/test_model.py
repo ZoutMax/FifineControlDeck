@@ -671,3 +671,28 @@ def test_a_malformed_profile_is_preserved_not_silently_emptied(tmp_path):
                 blob += f.read()
     assert "macro12" in blob, "a profile's keys were destroyed with no copy kept"
     assert os.path.exists(path + ".corrupt"), "nothing was preserved"
+
+
+def test_a_json_infinity_number_does_not_crash_startup(tmp_path):
+    """Stress-audit finding (high): json.loads accepts Infinity/-Infinity/1e999
+    and parses them to float('inf'); int(inf) raises OverflowError, which was in
+    neither the brightness/version guards nor load()'s recovery except tuple. A
+    hand-edited/synced config with inf in a number crashed startup on every
+    launch, unrecoverably, bypassing the .corrupt recovery."""
+    path = str(tmp_path / "config.json")
+    good = ('{"name":"P","id":"a","pages":[{"name":"x","id":"b",'
+            '"keys":{},"knobs":{}}]}')
+    for bad in (
+        '{"version":1,"brightness":Infinity,"profiles":[' + good + ']}',
+        '{"version":1,"brightness":-Infinity,"profiles":[' + good + ']}',
+        '{"version":1e999,"brightness":50,"profiles":[' + good + ']}',
+    ):
+        with open(path, "w") as f:
+            f.write(bad)
+        cfg = DeckConfig.load(path)                 # must NOT raise
+        assert 0 <= cfg.brightness <= 100
+        assert isinstance(cfg.version, int)         # not float('inf')
+        cfg.save(path)                              # must not persist inf
+        with open(path) as f:
+            assert "Infinity" not in f.read()
+        DeckConfig.load(path)                       # and reloads clean

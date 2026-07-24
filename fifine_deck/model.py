@@ -301,10 +301,25 @@ class DeckConfig:
                     else []) or [Profile()]
         try:
             brightness = max(0, min(100, int(d.get("brightness", 80))))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError: json.loads accepts Infinity / -Infinity / 1e999 by
+            # default and parses them to float('inf'), and int(inf) raises
+            # OverflowError (an ArithmeticError, so the old TypeError/ValueError
+            # guard missed it). A hand-edited or synced config with inf here
+            # otherwise crashed startup UNRECOVERABLY — the outer recovery did
+            # not catch it either, so it was a re-crash-every-launch loop. NaN
+            # was always fine (int(nan) raises ValueError).
             brightness = 80
+        try:
+            # Coerce to a real int: passing it through verbatim let a JSON inf
+            # version become float('inf') on the object, which round-trips back
+            # out as "version": Infinity on the next save. load() re-derives the
+            # newer-version decision from the raw data separately.
+            version = int(d.get("version", CONFIG_VERSION))
+        except (TypeError, ValueError, OverflowError):
+            version = CONFIG_VERSION
         cfg = cls(
-            version=d.get("version", CONFIG_VERSION),
+            version=version,
             brightness=brightness,
             glow=bool(d.get("glow", True)),
             snap_hint_dismissed=bool(d.get("snap_hint_dismissed", False)),
@@ -471,8 +486,8 @@ class DeckConfig:
             # different versions.
             try:
                 found = int(data.get("version", CONFIG_VERSION))
-            except (TypeError, ValueError):
-                found = CONFIG_VERSION
+            except (TypeError, ValueError, OverflowError):
+                found = CONFIG_VERSION      # OverflowError: a JSON inf version
             if found > CONFIG_VERSION:
                 # _next_backup_path, not "skip if it exists": a SECOND, different
                 # newer config synced in later was stripped with no backup at
@@ -497,7 +512,11 @@ class DeckConfig:
                 cfg.version = CONFIG_VERSION
             return cfg
         except (json.JSONDecodeError, AttributeError, ValueError,
-                TypeError, KeyError, RecursionError):
+                TypeError, KeyError, RecursionError, ArithmeticError):
+            # ArithmeticError (OverflowError) is defense in depth for the same
+            # class as the brightness/version guards above: any int()/float()
+            # over a JSON inf ANYWHERE in from_dict now takes the preserve-and-
+            # restart path instead of crashing startup in an unrecoverable loop.
             # RecursionError is a RuntimeError, so it used to sail past this
             # list and out of load() as an unhandled crash at startup. Folders
             # nest arbitrarily and from_dict recurses per level, so a config

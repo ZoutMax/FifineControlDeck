@@ -4,6 +4,18 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.12.5] - 2026-07-24
+
+### Fixed
+- **A configuration file with an infinite number in it no longer stops the app
+  from starting.** A `brightness` or `version` of `Infinity` or `1e999` (which
+  JSON permits, and which a hand-edit, merge conflict or sync could introduce)
+  crashed the app on every launch with no way to recover — the file was left in
+  place, so it re-crashed each time. Such a value is now treated like any other
+  bad value: the setting falls back to its default and the app starts normally.
+  Found by an empirical stress-and-fuzz audit that otherwise hammered the app
+  with tens of millions of operations and hostile inputs without breaking it.
+
 ## [0.12.4] - 2026-07-23
 
 Five issues from a whole-codebase architecture audit, each reproduced before it
