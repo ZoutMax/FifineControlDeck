@@ -497,24 +497,30 @@ def test_failed_setup_closes_the_device_it_opened():
     assert c.device is None
 
 
-def test_a_device_that_never_opened_is_not_closed():
-    """open() returning False means there is nothing to close; calling close()
-    on it would push a disconnect packet at a device we never had."""
+def test_a_device_that_failed_to_open_is_closed_without_notifying():
+    """open() returning False still leaves the FifineDeck's GifController daemon
+    thread running (it starts at construction, before open), so _setup_device
+    must close() the handle to stop it or every failed reconnect leaks a thread.
+    But close must be notify=False: pushing a disconnect packet at a device we
+    never opened is exactly what we must not do (concurrency/lifecycle audit)."""
     from fifine_deck.controller import DeckController
     from fifine_deck.model import DeckConfig
 
     class _Shut(MockDevice):
         closed = 0
+        notified = None
 
         def open(self):
             return False
 
-        def close(self, *a, **k):
+        def close(self, *a, notify=True, **k):
             _Shut.closed += 1
+            _Shut.notified = notify
 
     c = DeckController(DeckConfig())
     assert c._setup_device(_Shut()) is False
-    assert _Shut.closed == 0
+    assert _Shut.closed == 1            # the GifController thread must be stopped
+    assert _Shut.notified is False      # ...but no disconnect packet is sent
 
 
 def test_a_handle_with_no_firmware_is_not_reported_as_connected():
@@ -540,6 +546,31 @@ def test_a_handle_with_no_firmware_is_not_reported_as_connected():
     assert c.device is None
     assert _Mute.closed == 1, "the unusable handle was left open"
     assert "udev" in c.last_error, "no user-facing reason recorded"
+
+
+def test_setup_device_aborts_and_closes_when_stopped_mid_open():
+    """A udev add/change uevent can run _setup_device concurrently with stop().
+    If stop() already ran (_stopped set), the freshly opened handle is a
+    post-teardown resurrection whose SDK reader+heartbeat threads would leak, so
+    _setup_device must abort and close it instead of assigning self.device.
+    (concurrency/lifecycle audit)"""
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+
+    class _Dev(MockDevice):
+        closed = 0
+
+        def open(self):
+            return True
+
+        def close(self, *a, **k):
+            _Dev.closed += 1
+
+    c = DeckController(DeckConfig())
+    c._stopped = True                  # stop() has already torn things down
+    assert c._setup_device(_Dev()) is False
+    assert c.device is None            # the handle was NOT resurrected
+    assert _Dev.closed == 1            # ...and its just-started threads are closed
 
 
 def test_a_failed_open_records_why_for_the_ui():

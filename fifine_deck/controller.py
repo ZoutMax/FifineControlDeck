@@ -67,6 +67,9 @@ class DeckController:
         self._open_lock = threading.Lock()
         self._listen_thread: Optional[threading.Thread] = None
         self._running = False
+        # Set once by stop(), never cleared: distinguishes "torn down" from
+        # "not started yet" (a cold try_open runs with _running still False).
+        self._stopped = False
         self._gif_keys: set[int] = set()   # logical keys currently animated
         self._nav: list = []               # folder navigation stack
         self._container = None             # current Folder, or None at profile root
@@ -158,11 +161,12 @@ class DeckController:
         relaunch.
         """
         with self._open_lock:
-            if self.device is not None and self.device.firmware_version:
-                return True
-            if self.device is not None:
+            dev = self.device            # snapshot: stop()/_on_removed can null
+            if dev is not None and dev.firmware_version:   # self.device under
+                return True                                # _lock while we hold
+            if dev is not None:                            # only _open_lock
                 try:
-                    self.device.close()
+                    dev.close()
                 except Exception:
                     pass
                 with self._lock:
@@ -201,7 +205,11 @@ class DeckController:
         """
         if not self._running:
             return
-        if self.device is not None and self.device.firmware_version:
+        # Snapshot once: a concurrent try_open (below) or stop() can null
+        # self.device under _lock between the is-not-None test and the
+        # attribute read, and `.firmware_version` on None would AttributeError.
+        dev = self.device
+        if dev is not None and dev.firmware_version:
             return                       # already working; nothing to recover
         try:
             if self.try_open():
@@ -262,6 +270,17 @@ class DeckController:
                 hint = snap_usb_hint()
                 if hint:
                     log.warning("%s", hint)
+                # open() failed, but the FifineDeck's GifController daemon thread
+                # starts at construction (before open), so returning without
+                # close() leaks that thread — plus the deck and its transport —
+                # on every failed reconnect. close(notify=False) stops the
+                # thread without pushing a disconnect packet at a device we
+                # never opened; it is idempotent and safe on an unopened handle.
+                try:
+                    dev.close(notify=False)
+                except Exception:
+                    log.debug("close() after a failed open also failed",
+                              exc_info=True)
                 return False
             dev.init()
             # A handle with no firmware is the libusb "false connect": open()
@@ -281,12 +300,26 @@ class DeckController:
                 return False
             self._cancel_holds()        # a replug starts with a clean slate
             with self._lock:
-                self.device = dev
-                # Do NOT reset page_index here: a hotplug replug would then
-                # snap the user back to page 1 and, via on_page_changed, make
-                # the GUI clear its editor and drop an open picker's result.
-                # page_index defaults to 0 for the initial connect, and
-                # render_page/current_page clamp it, so preserving it is safe.
+                # stop() serializes behind _open_lock and sets _stopped True
+                # before tearing down, so if it is set while we were opening
+                # this handle is a post-teardown resurrection — its just-started
+                # SDK reader + heartbeat threads would leak. Abort instead.
+                # (_stopped, not _running: a cold try_open opens before start().)
+                resurrected = self._stopped
+                if not resurrected:
+                    self.device = dev
+                    # Do NOT reset page_index here: a hotplug replug would then
+                    # snap the user back to page 1 and, via on_page_changed, make
+                    # the GUI clear its editor and drop an open picker's result.
+                    # page_index defaults to 0 for the initial connect, and
+                    # render_page/current_page clamp it, so preserving it is safe.
+            if resurrected:
+                try:
+                    dev.close()          # OUTSIDE _lock: close() joins the reader
+                except Exception:        # + heartbeat threads it just started
+                    log.debug("closing a device opened during shutdown failed",
+                              exc_info=True)
+                return False
             self.last_error = ""            # a working handle clears the reason
             self._forget_key_faces()        # a fresh handle shows a blank deck
             dev.set_key_callback(self._key_callback)
@@ -318,6 +351,7 @@ class DeckController:
 
     def stop(self):
         self._running = False
+        self._stopped = True
         self._cancel_holds()
         self._monitor_stop.set()
         # Make room first: the queue is bounded now, and a plain put() on a
@@ -333,47 +367,55 @@ class DeckController:
                 except queue.Empty:
                     break
         self._decode_queue.put(None)   # and the gif decode worker
-        dev = self.device
-        # Drop the callback BEFORE taking the lock: a _key_callback already
-        # running is blocked on self._lock, and dev.close() below joins the
-        # SDK reader thread. If close() ran while we held the lock, that
-        # in-flight callback could never acquire it, the join would time out,
-        # and the device would be left half-closed.
-        if dev:
-            try:
-                dev.set_key_callback(None)
-            except Exception:
-                pass
-        with self._lock:
+        # Serialize teardown against an in-flight open: _setup_device holds
+        # _open_lock while it opens and assigns self.device. Taking it here means
+        # either that open already finished (we tear its handle down) or it runs
+        # after us and aborts on the _stopped flag set above. Without this, a
+        # udev add/change uevent racing stop() could reopen the deck right after
+        # we freed it, leaking its reader + heartbeat threads.
+        with self._open_lock:
+            dev = self.device
+            # Drop the callback BEFORE taking the lock: a _key_callback already
+            # running is blocked on self._lock, and dev.close() below joins the
+            # SDK reader thread. If close() ran while we held the lock, that
+            # in-flight callback could never acquire it, the join would time out,
+            # and the device would be left half-closed.
             if dev:
                 try:
-                    time.sleep(0.05)
-                    # Stop animations first so the GIF loop can't repaint the
-                    # keys we are about to clear. Clearing the loop FLAG is not
-                    # enough: the worker collects its frame batch under its own
-                    # lock and writes AFTER releasing it, so one more frame
-                    # could land after clearAllIcon() and stay lit on the
-                    # physical deck once the app was gone. Stop the worker
-                    # itself and wait for it.
-                    dev.stop_gif_loop()
-                    try:
-                        if not dev.gif_controller.close():
-                            log.debug("gif worker still running at clear time; "
-                                      "a stale frame may survive")
-                    except Exception:
-                        log.debug("stopping the gif worker failed", exc_info=True)
-                    self._gif_keys.clear()
-                    dev.clearAllIcon()
-                    dev.refresh()
+                    dev.set_key_callback(None)
                 except Exception:
                     pass
-            self.device = None
-        # close() joins the reader thread — do it OUTSIDE the lock.
-        if dev:
-            try:
-                dev.close()
-            except Exception:
-                pass
+            with self._lock:
+                if dev:
+                    try:
+                        time.sleep(0.05)
+                        # Stop animations first so the GIF loop can't repaint the
+                        # keys we are about to clear. Clearing the loop FLAG is not
+                        # enough: the worker collects its frame batch under its own
+                        # lock and writes AFTER releasing it, so one more frame
+                        # could land after clearAllIcon() and stay lit on the
+                        # physical deck once the app was gone. Stop the worker
+                        # itself and wait for it.
+                        dev.stop_gif_loop()
+                        try:
+                            if not dev.gif_controller.close():
+                                log.debug("gif worker still running at clear time; "
+                                          "a stale frame may survive")
+                        except Exception:
+                            log.debug("stopping the gif worker failed", exc_info=True)
+                        self._gif_keys.clear()
+                        dev.clearAllIcon()
+                        dev.refresh()
+                    except Exception:
+                        pass
+                self.device = None
+            # close() joins the reader thread — do it OUTSIDE _lock (still under
+            # _open_lock).
+            if dev:
+                try:
+                    dev.close()
+                except Exception:
+                    pass
 
     @property
     def connected(self) -> bool:

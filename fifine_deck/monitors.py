@@ -426,6 +426,12 @@ class Sampler:
             self._release_nvml(getattr(self, attr))
             setattr(self, attr, ("none",))
         else:
+            # Balance this backend's nvmlInit() before dropping it: the next
+            # sample re-probes (attr is None) and calls nvmlInit() again, so
+            # without the release an intermittently-failing GPU — which never
+            # reaches the n>=20 settle above because a good read resets the
+            # counter — climbs NVML's refcount on every failure/re-probe cycle.
+            self._release_nvml(getattr(self, attr))
             setattr(self, attr, None)
 
     def _gpu_read_ok(self, attr: str) -> None:

@@ -674,6 +674,25 @@ def test_gpu_nvml_backend(monkeypatch):
     assert r.ok and r.pct == pytest.approx(62.0) and r.text == "62%"
 
 
+def test_gpu_read_failure_releases_nvml_before_reprobe():
+    """A read failure (n<20) drops the backend so the next sample re-probes; it
+    must nvmlShutdown() the outstanding nvmlInit() first. Otherwise an
+    intermittently failing GPU — where good reads reset the consecutive counter,
+    so the n>=20 permanent-settle never trips — climbs NVML's refcount on every
+    failure/re-probe cycle. (concurrency/lifecycle audit)"""
+    shut = {"n": 0}
+
+    class _NVML:
+        def nvmlShutdown(self):
+            shut["n"] += 1
+
+    s = Sampler()
+    s._gpu_backend = ("nvml", _NVML(), "h0")
+    s._gpu_read_failed("_gpu_backend", "_gpu_retries")
+    assert s._gpu_backend is None      # dropped so the next sample re-probes
+    assert shut["n"] == 1              # and the outstanding nvmlInit() was balanced
+
+
 def test_gpu_backend_death_reprobes_next_sample(tmp_path, monkeypatch):
     """Mirror of the VRAM lifecycle: a dead backend degrades to n/a, drops the
     cache, and the NEXT sample re-probes instead of warning forever."""
