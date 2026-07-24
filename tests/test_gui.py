@@ -1852,6 +1852,21 @@ def test_import_does_not_reap_secrets_referenced_by_the_backup(win, monkeypatch,
     assert "pw-old" not in w._owned_secret_ids  # but it is no longer "owned"
 
 
+def test_quit_is_idempotent(win, monkeypatch):
+    """app.py wires BOTH SIGTERM and SIGINT to _quit, and controller.stop() holds
+    the non-reentrant _open_lock across its teardown. A second signal must not
+    re-enter _quit -> stop() and deadlock re-acquiring that lock. (maximum-audit)"""
+    from PyQt6.QtWidgets import QApplication
+    w, cfg, c = win
+    stops = []
+    monkeypatch.setattr(c, "stop", lambda: stops.append(1))
+    monkeypatch.setattr(cfg, "save", lambda *a, **k: None)
+    monkeypatch.setattr(QApplication, "quit", lambda *a, **k: None)
+    w._quit()
+    w._quit()                          # second call must be a no-op
+    assert stops == [1]                # controller.stop() ran exactly once
+
+
 def test_import_warns_about_command_running_keys(win, monkeypatch, tmp_path):
     """Security-audit hardening: importing a config that contains keys which run
     shell commands / launch programs must say so in the confirm dialog, since an

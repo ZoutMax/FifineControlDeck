@@ -41,6 +41,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.config = config
         self.controller = controller
+        self._quitting = False          # guards _quit against a re-entrant signal
         self.buttons: dict[int, KeyButton] = {}
         self.selected_index: int | None = None
         # Every keyring secret_id the config currently references. After a save
@@ -1187,6 +1188,14 @@ class MainWindow(QMainWindow):
         self._reap_orphan_secrets()
 
     def _quit(self):
+        # app.py wires BOTH SIGTERM and SIGINT to _quit, and controller.stop()
+        # holds the non-reentrant _open_lock across its ~2 s teardown. A second
+        # signal landing mid-teardown would run its handler nested on the Qt
+        # thread, re-enter here, and deadlock re-acquiring _open_lock — the LCDs
+        # would never clear and only SIGKILL would end it. Make quit idempotent.
+        if self._quitting:
+            return
+        self._quitting = True
         try:
             self.config.save()
         except Exception as e:

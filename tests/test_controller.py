@@ -573,6 +573,18 @@ def test_setup_device_aborts_and_closes_when_stopped_mid_open():
     assert _Dev.closed == 1            # ...and its just-started threads are closed
 
 
+def test_stop_is_idempotent():
+    """A re-entrant termination signal must not run stop() twice: it holds the
+    non-reentrant _open_lock across teardown, so a second pass would deadlock
+    re-acquiring it. The guard makes the second call a no-op. (maximum-audit)"""
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+    c = DeckController(DeckConfig())
+    c.stop()
+    assert c._stopped
+    c.stop()                           # must return immediately, not hang or raise
+
+
 def test_a_failed_open_records_why_for_the_ui():
     """"○ no device" was shown both for an absent deck and for a present one we
     lack permission to open — completely different problems for the user."""

@@ -149,6 +149,31 @@ def test_typing_without_a_keystroke_tool_says_so(monkeypatch, caplog):
     assert any("no keystroke tool" in r.message for r in caplog.records)
 
 
+def test_hotkey_canonicalizes_keysyms_for_xdotool(monkeypatch):
+    """The app's abbreviations (esc/del/pgup) and symbol forms are not valid X
+    keysyms, so on the default xdotool (X11) backend ctrl+esc silently injected
+    nothing. They must be canonicalized before xdotool. (maximum-audit)"""
+    calls = []
+    monkeypatch.setattr(actions, "KEY_TOOL", "xdotool")
+    monkeypatch.setattr(actions, "_run", lambda argv, **k: calls.append(argv))
+    for combo in ("ctrl+esc", "super+pgup", "ctrl+shift+del", "alt+.", "ctrl+`"):
+        actions._send_hotkey(combo)
+    sent = [argv[3] for argv in calls]      # ["xdotool","key","--clearmodifiers",combo]
+    assert sent == ["ctrl+Escape", "super+Prior", "ctrl+shift+Delete",
+                    "alt+period", "ctrl+grave"]
+    # a plain combo passes through untouched
+    calls.clear(); actions._send_hotkey("ctrl+c")
+    assert calls[0][3] == "ctrl+c"
+
+
+def test_hotkey_ydotool_covers_punctuation_and_high_f_keys():
+    """The reverse gap: keys that worked on xdotool were silently dropped on
+    ydotool for want of a keycode. (maximum-audit)"""
+    for k in ("grave", "bracketright", "backslash", "apostrophe", "f13", "f24"):
+        assert actions._ydotool_keycodes("ctrl+" + k) is not None, \
+            f"{k} still missing from _KEYCODES"
+
+
 # -- deck-side actions are delegated to the context --------------------------
 
 @pytest.mark.parametrize("t", ["next_page", "prev_page", "next_profile",

@@ -19,7 +19,12 @@ if "FIFINE_DICT_REEXEC" not in os.environ:
     os.environ["FIFINE_DICT_REEXEC"] = "1"
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-SOCK = "/tmp/fifine-dictate.sock"
+# Must match fifine-dictate: a user-private runtime dir, never world-writable
+# /tmp (a co-tenant could squat the fixed path). XDG_RUNTIME_DIR is a per-user
+# 0700 tmpfs; fall back to the app's own data dir.
+_RUNDIR = os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser(
+    "~/.local/share/fifine-dictation")
+SOCK = os.path.join(_RUNDIR, "fifine-dictate.sock")
 
 def main():
     from faster_whisper import WhisperModel
@@ -30,6 +35,10 @@ def main():
     try:
         os.unlink(SOCK)
     except FileNotFoundError:
+        pass
+    except OSError:
+        # A leftover of a different type, or a foreign-owned file squatting the
+        # path (unlink fails cross-uid under a sticky dir): don't abort startup.
         pass
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(SOCK)

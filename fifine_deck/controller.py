@@ -350,6 +350,11 @@ class DeckController:
             return False
 
     def stop(self):
+        # Idempotent: a second call (e.g. a re-entrant termination signal) must
+        # not run the teardown twice — it holds the non-reentrant _open_lock, so
+        # re-entering would deadlock. _quit guards this too; belt and braces.
+        if self._stopped:
+            return
         self._running = False
         self._stopped = True
         self._cancel_holds()

@@ -287,6 +287,14 @@ for _n in range(1, 11):
     _KEYCODES[f"f{_n}"] = 58 + _n            # F1=59 .. F10=68
 _KEYCODES["f11"] = 87
 _KEYCODES["f12"] = 88
+for _n in range(13, 25):
+    _KEYCODES[f"f{_n}"] = 183 + (_n - 13)    # F13=183 .. F24=194
+# Common punctuation keys that previously worked on xdotool (X11) but were a
+# silent no-op on ydotool because they were missing here.
+_KEYCODES.update({
+    "grave": 41, "`": 41, "bracketleft": 26, "[": 26, "bracketright": 27,
+    "]": 27, "backslash": 43, "\\": 43, "apostrophe": 40, "'": 40,
+})
 
 
 def _ydotool_keycodes(combo: str):
@@ -300,6 +308,33 @@ def _ydotool_keycodes(combo: str):
     return codes
 
 
+# The app's key vocabulary -> X keysym NAMES for xdotool / wtype. ydotool uses
+# _KEYCODES (numeric) directly, but xdotool/wtype resolve keysym names, and the
+# app's abbreviations and symbol forms are not valid keysyms (esc, del, pgup, and
+# `-,.;/[]\'` etc.), so ctrl+esc and friends silently injected NOTHING on X11.
+# Tokens not listed pass through unchanged: single letters/digits are valid
+# keysyms, and ctrl/alt/shift/super are xdotool modifier aliases.
+_X_KEYSYM = {
+    "esc": "Escape", "del": "Delete", "ins": "Insert",
+    "pgup": "Prior", "pageup": "Prior", "pgdn": "Next", "pagedown": "Next",
+    "enter": "Return", "backspace": "BackSpace", "capslock": "Caps_Lock",
+    "printscreen": "Print", "print": "Print",
+    "win": "super", "logo": "super", "meta": "super",
+    "altgr": "ISO_Level3_Shift",
+    "up": "Up", "down": "Down", "left": "Left", "right": "Right",
+    "home": "Home", "end": "End",
+    "-": "minus", ".": "period", "dot": "period", ",": "comma", "/": "slash",
+    ";": "semicolon", "=": "equal", "`": "grave", "[": "bracketleft",
+    "]": "bracketright", "\\": "backslash", "'": "apostrophe",
+}
+
+
+def _to_x_keysym(part: str) -> str:
+    """Map one hotkey token to the X keysym name xdotool/wtype expect."""
+    p = part.strip()
+    return _X_KEYSYM.get(p.lower(), p)
+
+
 def _send_hotkey(combo: str) -> None:
     """Send a key combination like 'ctrl+shift+m'. Best-effort across tools."""
     combo = combo.strip()
@@ -308,19 +343,24 @@ def _send_hotkey(combo: str) -> None:
             log.warning("no keystroke tool (install xdotool / ydotool / wtype)")
         return
     if KEY_TOOL == "xdotool":
-        _run(["xdotool", "key", "--clearmodifiers", combo],
+        # Canonicalise each token to an X keysym so abbreviations (esc, pgup)
+        # and symbol forms resolve instead of silently injecting nothing.
+        combo_x = "+".join(_to_x_keysym(p) for p in combo.split("+"))
+        _run(["xdotool", "key", "--clearmodifiers", combo_x],
                        stderr=subprocess.DEVNULL)
     elif KEY_TOOL == "wtype":
-        parts = [p.lower() for p in combo.split("+")]
-        mods, key = parts[:-1], parts[-1]
+        parts = combo.split("+")
+        _modmap = {"ctrl": "ctrl", "control": "ctrl", "alt": "alt",
+                   "shift": "shift", "super": "logo", "meta": "logo",
+                   "win": "logo", "logo": "logo"}
+        mods = [p.strip().lower() for p in parts[:-1]]
+        key = _to_x_keysym(parts[-1])           # canonical keysym, keep its case
         args = ["wtype"]
         for m in mods:
-            args += ["-M", {"ctrl": "ctrl", "control": "ctrl", "alt": "alt",
-                            "shift": "shift", "super": "logo", "meta": "logo"}.get(m, m)]
+            args += ["-M", _modmap.get(m, m)]
         args += ["-k", key]
         for m in mods:
-            args += ["-m", {"ctrl": "ctrl", "control": "ctrl", "alt": "alt",
-                            "shift": "shift", "super": "logo", "meta": "logo"}.get(m, m)]
+            args += ["-m", _modmap.get(m, m)]
         _run(args, stderr=subprocess.DEVNULL)
     elif KEY_TOOL == "ydotool":
         # ydotool needs numeric keycodes: press all down (in order), release up.

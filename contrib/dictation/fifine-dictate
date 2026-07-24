@@ -11,21 +11,32 @@
 # All local: audio never leaves this machine.
 set -u
 DIR="$HOME/.local/share/fifine-dictation"
-SOCK=/tmp/fifine-dictate.sock
-WAV=/tmp/fifine-dictate.wav
-PIDFILE=/tmp/fifine-dictate.pid
+# Keep runtime state in a user-private dir, NOT world-writable /tmp. On a shared
+# host a co-tenant could pre-create these fixed paths; via the PID file the next
+# Talk press would then kill whatever PID they planted. XDG_RUNTIME_DIR is a
+# per-user 0700 tmpfs; fall back to the app's own (0700) data dir.
+RUNDIR="${XDG_RUNTIME_DIR:-$DIR}"
+mkdir -p "$RUNDIR" 2>/dev/null || true
+[ "$RUNDIR" = "$DIR" ] && chmod 700 "$RUNDIR" 2>/dev/null
+SOCK="$RUNDIR/fifine-dictate.sock"
+WAV="$RUNDIR/fifine-dictate.wav"
+PIDFILE="$RUNDIR/fifine-dictate.pid"
+TICK="$RUNDIR/fifine-dictate.tick"
+NOTIFID="$RUNDIR/fifine-dictate.notifid"
+SERVERLOG="$RUNDIR/fifine-dictate-server.log"
+LASTTXT="$RUNDIR/fifine-dictate-last.txt"
 DRY="${1:-}"
 
 ensure_server() {
-    if [ ! -S "$SOCK" ] || ! python3 - << 'PY' 2>/dev/null
-import socket
+    if [ ! -S "$SOCK" ] || ! SOCK="$SOCK" python3 - << 'PY' 2>/dev/null
+import os, socket
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.settimeout(1)
-s.connect("/tmp/fifine-dictate.sock")
+s.connect(os.environ["SOCK"])
 s.close()
 PY
     then
-        nohup "$DIR/venv/bin/python" "$DIR/server.py" > /tmp/fifine-dictate-server.log 2>&1 &
+        nohup "$DIR/venv/bin/python" "$DIR/server.py" > "$SERVERLOG" 2>&1 &
         for _ in $(seq 1 60); do [ -S "$SOCK" ] && break; sleep 0.5; done
     fi
 }
@@ -36,21 +47,21 @@ if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     rm -f "$PIDFILE"
     # No ticker is started any more (see the comment further down), but a
     # session begun by an older copy of this script may still have one.
-    [ -f /tmp/fifine-dictate.tick ] && kill "$(cat /tmp/fifine-dictate.tick)" 2>/dev/null
-    rm -f /tmp/fifine-dictate.tick
-    if [ -f /tmp/fifine-dictate.notifid ]; then
+    [ -f "$TICK" ] && kill "$(cat "$TICK")" 2>/dev/null
+    rm -f "$TICK"
+    if [ -f "$NOTIFID" ]; then
         gdbus call --session --dest org.freedesktop.Notifications \
             --object-path /org/freedesktop/Notifications \
             --method org.freedesktop.Notifications.CloseNotification \
-            "$(cat /tmp/fifine-dictate.notifid)" >/dev/null 2>&1 || true
-        rm -f /tmp/fifine-dictate.notifid
+            "$(cat "$NOTIFID")" >/dev/null 2>&1 || true
+        rm -f "$NOTIFID"
     fi
     sleep 0.3                       # let the wav flush
-    TEXT=$(python3 - "$WAV" << 'PY'
-import socket, sys
+    TEXT=$(SOCK="$SOCK" python3 - "$WAV" << 'PY'
+import os, socket, sys
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.settimeout(120)
-s.connect("/tmp/fifine-dictate.sock")
+s.connect(os.environ["SOCK"])
 s.sendall((sys.argv[1] + "\n").encode())
 buf = b""
 while not buf.endswith(b"\n"):
@@ -68,7 +79,7 @@ PY
     if [ "${#TEXT}" -gt 600 ]; then
         # A runaway recording produced an essay: never type it blindly into
         # the focused window. Park it in a file instead.
-        printf '%s\n' "$TEXT" > /tmp/fifine-dictate-last.txt
+        printf '%s\n' "$TEXT" > "$LASTTXT"
         spd-say -r -20 "That was very long. I saved it to a file instead of typing it."
         exit 0
     fi
@@ -102,5 +113,5 @@ else
     # The 90 s auto-stop is the runaway guard instead.
     notify-send --print-id -u critical -t 0 "🔴 Recording" \
         "Dictation is listening — press Talk again to stop (auto-stops at 90 s)" \
-        > /tmp/fifine-dictate.notifid 2>/dev/null || true
+        > "$NOTIFID" 2>/dev/null || true
 fi
