@@ -627,6 +627,33 @@ def _page_loss_summary(page) -> str:
     return ", including ".join([bits[0], "; ".join(bits[1:])]) if folders else bits[0]
 
 
+def _iter_step_action_dicts(params, _depth=0):
+    """Yield the action-dict of every nested step, recursing into nested
+    multi-steps, tolerant of malformed or hostile shapes (never raises).
+
+    Steps live as raw dicts inside a parent action's params: Action.from_dict
+    keeps params a shallow dict and never turns steps into Action objects, so
+    an imported config carries whatever shape it was given. A step's sub-action
+    may itself be a "multi" whose own steps run at execute() time (actions.py's
+    execute() recurses), so we recurse here too, or the import warning would
+    miss a command hidden one level down. The depth cap stops a hand-built
+    cyclic or pathologically deep config from overflowing the stack.
+    """
+    if _depth > 32 or not isinstance(params, dict):
+        return
+    steps = params.get("steps")
+    if not isinstance(steps, (list, tuple)):
+        return
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        inner = step.get("action", step)
+        if not isinstance(inner, dict):
+            continue
+        yield inner
+        yield from _iter_step_action_dicts(inner.get("params"), _depth + 1)
+
+
 def iter_key_secret_ids(kc):
     """Yield every keyring secret_id a key owns — through its action, hold
     action, any multi-step sub-actions, and any nested folder (recursively).
@@ -639,17 +666,17 @@ def iter_key_secret_ids(kc):
     def from_action(a):
         if a is None:
             return
-        if getattr(a, "type", None) == "password":
-            sid = a.params.get("secret_id")
+        params = getattr(a, "params", None)
+        if getattr(a, "type", None) == "password" and isinstance(params, dict):
+            sid = params.get("secret_id")
             if sid:
                 yield sid
-        for step in (a.params.get("steps") or []):
-            if isinstance(step, dict):
-                inner = step.get("action", step)
-                if isinstance(inner, dict) and inner.get("type") == "password":
-                    sid = (inner.get("params") or {}).get("secret_id")
-                    if sid:
-                        yield sid
+        for inner in _iter_step_action_dicts(params):
+            if inner.get("type") == "password":
+                p = inner.get("params")
+                sid = p.get("secret_id") if isinstance(p, dict) else None
+                if sid:
+                    yield sid
 
     seen = set()
     stack = [kc]
@@ -678,17 +705,18 @@ def iter_command_actions(config):
     """
     EXEC = {"run_command", "launch_app"}
 
+    def _cmd(params):
+        return params.get("command", "") if isinstance(params, dict) else ""
+
     def from_action(a, where):
         if a is None:
             return
+        params = getattr(a, "params", None)
         if getattr(a, "type", None) in EXEC:
-            yield (where, a.params.get("command", ""))
-        for step in (a.params.get("steps") or []):
-            if isinstance(step, dict):
-                inner = step.get("action", step)
-                if isinstance(inner, dict) and inner.get("type") in EXEC:
-                    yield (where + " (multi-step)",
-                           (inner.get("params") or {}).get("command", ""))
+            yield (where, _cmd(params))
+        for inner in _iter_step_action_dicts(params):
+            if inner.get("type") in EXEC:
+                yield (where + " (multi-step)", _cmd(inner.get("params")))
 
     def walk(cont, prefix):
         for page in getattr(cont, "pages", []):

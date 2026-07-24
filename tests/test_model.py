@@ -8,7 +8,8 @@ import os
 import pytest
 
 from fifine_deck.model import (Action, CONFIG_VERSION, DeckConfig, Folder,
-                                KeyConfig)
+                                KeyConfig, iter_command_actions,
+                                iter_key_secret_ids)
 
 
 def test_action_roundtrip():
@@ -706,3 +707,62 @@ def test_sleep_with_screen_round_trips():
     # absent in an older config -> defaults to True
     d = c.to_dict(); del d["sleep_with_screen"]
     assert DeckConfig.from_dict(d).sleep_with_screen is True
+
+
+def _cfg_with_action(action):
+    return DeckConfig.from_dict({"profiles": [{"name": "P", "pages": [
+        {"keys": {"1": {"label": "x", "action": action}}}]}]})
+
+
+def _key1(cfg):
+    keys = cfg.profiles[0].pages[0].keys
+    return keys[next(iter(keys))]
+
+
+# A config from a forum/sync passes looks_like_config's structural gate but can
+# carry any shape inside an action's params. iter_command_actions powers the
+# import security warning, so if it raises the warning never shows and (outside
+# the import try/except) the handler aborts. These are the exact hostile shapes
+# the audit reproduced; each must be walked without raising. Regression for the
+# v0.12.6 pre-release HIGH finding.
+@pytest.mark.parametrize("action", [
+    {"type": "none", "params": {"steps": 5}},            # steps a truthy non-iterable
+    {"type": "none", "params": {"steps": 3.5}},
+    {"type": "none", "params": {"steps": True}},
+    {"type": "multi", "params": {"steps": [
+        {"action": {"type": "run_command", "params": ["ls"]}}]}},   # inner params a list
+    {"type": "multi", "params": {"steps": [
+        {"action": {"type": "run_command", "params": "xterm"}}]}},  # inner params a str
+    {"type": "multi", "params": "nope"},                 # params not even a dict
+    {"type": "multi", "params": {"steps": ["notadict", 7, None]}},
+])
+def test_iter_command_actions_survives_hostile_configs(action):
+    cfg = _cfg_with_action(action)
+    assert isinstance(list(iter_command_actions(cfg)), list)   # must NOT raise
+    assert isinstance(list(iter_key_secret_ids(_key1(cfg))), list)
+
+
+def test_iter_command_actions_reports_nested_multi_step():
+    # A step whose sub-action is itself a "multi" runs its command at execute()
+    # time (actions.execute recurses), so the import warning must surface it.
+    nested = {"type": "multi", "params": {"steps": [
+        {"action": {"type": "multi", "params": {"steps": [
+            {"action": {"type": "launch_app", "params": {"command": "xterm"}}}]}}}]}}
+    cmds = [c for _, c in iter_command_actions(_cfg_with_action(nested))]
+    assert "xterm" in cmds
+
+
+def test_iter_command_actions_still_finds_plain_and_one_level_multi():
+    plain = {"type": "run_command", "params": {"command": "ls"}}
+    assert [c for _, c in iter_command_actions(_cfg_with_action(plain))] == ["ls"]
+    one = {"type": "multi", "params": {"steps": [
+        {"action": {"type": "run_command", "params": {"command": "id"}}}]}}
+    assert [c for _, c in iter_command_actions(_cfg_with_action(one))] == ["id"]
+
+
+def test_iter_step_walk_terminates_on_a_cyclic_config():
+    # A hand-built in-memory cycle must not overflow the stack (depth cap).
+    cyc = {"type": "multi", "params": {}}
+    cyc["params"]["steps"] = [{"action": cyc}]
+    cfg = _cfg_with_action({"type": "multi", "params": {"steps": [{"action": cyc}]}})
+    assert isinstance(list(iter_command_actions(cfg)), list)   # no RecursionError
