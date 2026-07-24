@@ -71,6 +71,11 @@ class MockDevice:
     def refresh(self):
         self.refreshes += 1
 
+    woke = 0
+
+    def wakeScreen(self):
+        self.woke += 1
+
     def clearAllIcon(self):
         self.key_images.clear()
 
@@ -749,3 +754,28 @@ def test_a_positive_transport_error_counts_as_failure(caplog):
     # and a subsequent 0 (success) resets it
     c._note_write_result(0, 4)
     assert c._write_failures == 0
+
+
+def test_sleep_and_wake_the_deck():
+    """The 'sleep deck with the screen' feature: sleep_screen puts the device to
+    sleep, wake_screen wakes it and repaints the current page (the panel is
+    blank after sleep, so faces must be forgotten first)."""
+    c, dev = _connected()
+    try:
+        c.sleep_screen()
+        assert dev.transport.slept is True
+        dev.refreshes = 0
+        dev.key_images.clear()
+        c.wake_screen()
+        assert dev.woke == 1
+        assert len(dev.key_images) == dev.KEY_COUNT   # repainted after wake
+    finally:
+        c.stop()
+
+
+def test_wake_screen_is_safe_with_no_device():
+    from fifine_deck.controller import DeckController
+    from fifine_deck.model import DeckConfig
+    c = DeckController(DeckConfig())
+    c.wake_screen()          # must not raise with device is None
+    c.stop()

@@ -1801,3 +1801,34 @@ def test_import_of_a_clean_config_has_no_command_warning(win, monkeypatch, tmp_p
     w, cfg, c = win
     w._import_config()
     assert "run a shell command" not in _AutoBox.questions[-1]
+
+
+def test_deck_follows_the_screen_when_enabled(win):
+    """The screensaver watcher's callback sleeps the deck on blank and wakes it
+    on return, gated on the config toggle."""
+    w, cfg, c = win
+    calls = []
+    c.sleep_screen = lambda: calls.append("sleep")
+    c.wake_screen = lambda: calls.append("wake")
+
+    cfg.sleep_with_screen = True
+    w._on_screen_blank(True)      # screen blanked
+    w._on_screen_blank(False)     # screen returned
+    assert calls == ["sleep", "wake"]
+
+    calls.clear()
+    cfg.sleep_with_screen = False  # toggled off: callback does nothing
+    w._on_screen_blank(True)
+    w._on_screen_blank(False)
+    assert calls == []
+
+
+def test_sleep_with_screen_toggle_persists_and_wakes_on_disable(win):
+    w, cfg, c = win
+    woke = []
+    c.wake_screen = lambda: woke.append(1)
+    w._set_sleep_with_screen(False)
+    assert cfg.sleep_with_screen is False
+    assert woke == [1], "disabling must wake the deck so it isn't stuck dark"
+    w._set_sleep_with_screen(True)
+    assert cfg.sleep_with_screen is True

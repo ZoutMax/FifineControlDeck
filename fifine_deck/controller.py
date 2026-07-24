@@ -1039,6 +1039,22 @@ class DeckController:
                 except Exception as e:
                     log.error("sleep failed: %s", e)
 
+    def wake_screen(self) -> None:
+        """Wake the deck and repaint the current page. The counterpart to
+        sleep_screen(), used by the 'sleep with the screen' feature and safe to
+        call when already awake."""
+        woke = False
+        with self._lock:
+            if self.device:
+                try:
+                    self.device.wakeScreen()
+                    woke = True
+                except Exception as e:
+                    log.error("wake failed: %s", e)
+        if woke:
+            self._forget_key_faces()   # the panel is blank after sleep; force a real repaint
+            self.render_page()
+
     def goto_page(self, index: int) -> None:
         # Clamp: a "Go to page #" key configured with 0 (or beyond the last
         # page) must not store a bogus index — with no device attached nothing

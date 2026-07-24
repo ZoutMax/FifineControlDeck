@@ -265,6 +265,7 @@ class DeckConfig:
     brightness: int = 80
     glow: bool = True          # glow a key on the device while it is pressed
     snap_hint_dismissed: bool = False   # user ticked "don't show again" on the snap USB hint
+    sleep_with_screen: bool = True   # blank the deck when the screen/monitor blanks
     profiles: list[Profile] = field(default_factory=lambda: [Profile()])
     active_profile_id: str = ""
 
@@ -289,6 +290,7 @@ class DeckConfig:
             "brightness": self.brightness,
             "glow": self.glow,
             "snap_hint_dismissed": self.snap_hint_dismissed,
+            "sleep_with_screen": self.sleep_with_screen,
             "active_profile_id": self.active_profile_id,
             "profiles": [p.to_dict() for p in self.profiles],
         }
@@ -323,6 +325,7 @@ class DeckConfig:
             brightness=brightness,
             glow=bool(d.get("glow", True)),
             snap_hint_dismissed=bool(d.get("snap_hint_dismissed", False)),
+            sleep_with_screen=bool(d.get("sleep_with_screen", True)),
             profiles=profiles,
             active_profile_id=_as_str(d.get("active_profile_id"), ""),
         )

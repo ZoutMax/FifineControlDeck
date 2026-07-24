@@ -696,3 +696,13 @@ def test_a_json_infinity_number_does_not_crash_startup(tmp_path):
         with open(path) as f:
             assert "Infinity" not in f.read()
         DeckConfig.load(path)                       # and reloads clean
+
+
+def test_sleep_with_screen_round_trips():
+    c = DeckConfig()
+    assert c.sleep_with_screen is True          # sensible default: follow the screen
+    c.sleep_with_screen = False
+    assert DeckConfig.from_dict(c.to_dict()).sleep_with_screen is False
+    # absent in an older config -> defaults to True
+    d = c.to_dict(); del d["sleep_with_screen"]
+    assert DeckConfig.from_dict(d).sleep_with_screen is True

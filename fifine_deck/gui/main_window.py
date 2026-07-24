@@ -81,6 +81,20 @@ class MainWindow(QMainWindow):
         self._rebuild_grid()
         self._last_page_key = self._current_page_key()
 
+        # Follow the screen: blank the deck when the monitor/screensaver blanks,
+        # light it back up when it returns. Always listens; _on_screen_blank
+        # checks the toggle, so switching it off needs no reconnection.
+        from .screensaver import ScreenSaverWatcher
+        self._screen_watcher = ScreenSaverWatcher(self._on_screen_blank, self)
+
+    def _on_screen_blank(self, active: bool) -> None:
+        if not self.config.sleep_with_screen:
+            return
+        if active:
+            self.controller.sleep_screen()
+        else:
+            self.controller.wake_screen()
+
     def _build_menu(self):
         m = self.menuBar().addMenu("&Options")
         hide_act = QAction("Hide to background", self)
@@ -114,12 +128,24 @@ class MainWindow(QMainWindow):
         self.glow_act.setChecked(bool(self.config.glow))
         self.glow_act.toggled.connect(self._set_glow)
         m.addAction(self.glow_act)
+        # Sleep the deck with the screen
+        self.sleep_act = QAction("Sleep deck with the screen", self, checkable=True)
+        self.sleep_act.setChecked(bool(self.config.sleep_with_screen))
+        self.sleep_act.toggled.connect(self._set_sleep_with_screen)
+        m.addAction(self.sleep_act)
         m.addSeparator()
         m.addAction(quit_act)
 
     def _set_glow(self, on: bool):
         self.config.glow = bool(on)
         self._queue_save()
+
+    def _set_sleep_with_screen(self, on: bool):
+        self.config.sleep_with_screen = bool(on)
+        self._queue_save()
+        if not on:
+            # turning it off must not leave the deck stuck dark if it slept
+            self.controller.wake_screen()
 
     def _set_autostart(self, on: bool):
         from ..app import set_autostart
