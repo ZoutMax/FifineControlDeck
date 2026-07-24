@@ -661,3 +661,44 @@ def iter_key_secret_ids(kc):
             seen.add(id(folder))
             for pg in getattr(folder, "pages", []):
                 stack.extend(pg.keys.values())
+
+
+def iter_command_actions(config):
+    """Yield (where, command) for every action in a config that RUNS A SHELL
+    COMMAND or LAUNCHES A PROGRAM (run_command / launch_app) on a keypress,
+    through hold actions, multi-step sub-actions, nested folders, and knobs.
+
+    Used to warn on IMPORT: a config from someone else (a forum, a sync) can
+    hide an executable key behind an innocent label and icon, and it fires the
+    moment the key is pressed. Importing arbitrary executable content is a
+    documented capability, so this is a heads-up, not a block.
+    """
+    EXEC = {"run_command", "launch_app"}
+
+    def from_action(a, where):
+        if a is None:
+            return
+        if getattr(a, "type", None) in EXEC:
+            yield (where, a.params.get("command", ""))
+        for step in (a.params.get("steps") or []):
+            if isinstance(step, dict):
+                inner = step.get("action", step)
+                if isinstance(inner, dict) and inner.get("type") in EXEC:
+                    yield (where + " (multi-step)",
+                           (inner.get("params") or {}).get("command", ""))
+
+    def walk(cont, prefix):
+        for page in getattr(cont, "pages", []):
+            for idx, kc in page.keys.items():
+                w = prefix + " key " + str(idx) + (" '" + kc.label + "'" if kc.label else "")
+                yield from from_action(kc.action, w)
+                yield from from_action(kc.hold_action, w + " (hold)")
+                if kc.folder is not None:
+                    yield from walk(kc.folder, w + " >")
+            for idx, kn in page.knobs.items():
+                for slot in ("press", "left", "right"):
+                    yield from from_action(getattr(kn, slot, None),
+                                           prefix + " knob " + str(idx) + " " + slot)
+
+    for prof in getattr(config, "profiles", []):
+        yield from walk(prof, prof.name)

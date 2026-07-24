@@ -255,13 +255,25 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Import failed",
                                 f"Not a valid configuration file:\n{e}")
             return
-        from ..model import CONFIG_PATH
+        from ..model import CONFIG_PATH, iter_command_actions
         backup = _next_backup_path(CONFIG_PATH + ".bak")
+        # A config from someone else can hide a key that runs a shell command
+        # behind an innocent label + icon, and it fires on the first keypress.
+        # Importing executable content is a documented capability, so this is a
+        # heads-up, not a block: list what would run so the choice is informed.
+        cmds = list(iter_command_actions(imported))
+        warn = ""
+        if cmds:
+            shown = "\n".join(f"  • {w}:  {c}" for w, c in cmds[:6])
+            more = f"\n  … and {len(cmds) - 6} more" if len(cmds) > 6 else ""
+            warn = (f"\n\n⚠ This configuration has {len(cmds)} key(s) that run a "
+                    f"shell command or launch a program when pressed:\n{shown}{more}\n"
+                    f"Import it only if you trust where it came from.")
         if QMessageBox.question(
                 self, "Import configuration",
                 "Replace your current profiles, pages and settings with the "
-                "imported ones?\n\nYour current configuration is backed up to\n"
-                f"{backup}") != QMessageBox.StandardButton.Yes:
+                f"imported ones?{warn}\n\nYour current configuration is backed up "
+                f"to\n{backup}") != QMessageBox.StandardButton.Yes:
             return
         # Back up the current config before replacing it, and treat a failed
         # backup as a failed import. The dialog above PROMISES the backup, so

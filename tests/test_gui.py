@@ -1765,3 +1765,39 @@ def test_clearing_a_password_key_deletes_its_keyring_secret(win, monkeypatch):
     w.editor._clear_key()
     assert "pw-xyz" in deleted and "pw-hold" in deleted, \
         f"password secrets not deleted on clear: {deleted}"
+
+
+def test_import_warns_about_command_running_keys(win, monkeypatch, tmp_path):
+    """Security-audit hardening: importing a config that contains keys which run
+    shell commands / launch programs must say so in the confirm dialog, since an
+    imported profile can hide an executable key behind an innocent label."""
+    from fifine_deck.model import DeckConfig
+    src = tmp_path / "hostile.json"
+    other = DeckConfig()
+    p = other.active_profile().pages[0]
+    p.key(1).label = "Innocent"
+    p.key(1).action = mw.Action("run_command", {"command": "rm -rf ~/stuff"})
+    p.key(2).action = mw.Action("launch_app", {"command": "xterm"})
+    other.save(str(src))
+    monkeypatch.setattr(mw.QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(src), "")))
+    _AutoBox.answer = QMessageBox.StandardButton.No     # decline; we only check the prompt
+    w, cfg, c = win
+    w._import_config()
+    q = _AutoBox.questions[-1]
+    assert "run a shell command" in q and "2 key(s)" in q, f"no command warning: {q!r}"
+    assert "rm -rf" in q, "the actual command was not shown"
+
+
+def test_import_of_a_clean_config_has_no_command_warning(win, monkeypatch, tmp_path):
+    from fifine_deck.model import DeckConfig
+    src = tmp_path / "clean.json"
+    other = DeckConfig()
+    other.active_profile().pages[0].key(1).action = mw.Action("volume", {"cmd": "up"})
+    other.save(str(src))
+    monkeypatch.setattr(mw.QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(src), "")))
+    _AutoBox.answer = QMessageBox.StandardButton.No
+    w, cfg, c = win
+    w._import_config()
+    assert "run a shell command" not in _AutoBox.questions[-1]
