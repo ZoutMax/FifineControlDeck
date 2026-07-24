@@ -4,6 +4,29 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.12.8] - 2026-07-25
+
+Five fixes from a coverage-gap audit — a pass that first mapped which areas
+prior audits had not examined (signal handling, the hotkey injection backends,
+the optional dictation helper), then deep-audited them. Each was reproduced
+before it was fixed.
+
+### Fixed
+- **Hotkeys with named or symbol keys now work on every keystroke backend.**
+  The app's short key names (`esc`, `del`, `pgup`, …) and symbol forms (`.`,
+  backtick, brackets) are not valid X keysyms, so on the common X11 path
+  (xdotool) a combo like Ctrl+Escape silently did nothing; a few keys were also
+  dropped on Wayland (ydotool). All three backends now resolve the same key
+  vocabulary.
+- **Quitting no longer hangs on a double termination signal.** Two quit signals
+  in quick succession (e.g. Ctrl+C twice) could re-enter shutdown and deadlock,
+  leaving the app alive until force-killed. Quit is now idempotent.
+
+### Security
+- **The optional dictation helper no longer keeps runtime files in shared
+  `/tmp`.** They move to a private per-user directory, so another local user
+  cannot pre-create those paths to interfere with dictation.
+
 ## [0.12.7] - 2026-07-24
 
 Five fixes from a six-lens architecture audit (the GUI, rendering, animation,

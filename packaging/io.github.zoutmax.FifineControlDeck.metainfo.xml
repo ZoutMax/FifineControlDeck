@@ -44,6 +44,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.12.8" date="2026-07-25">
+      <description>
+        <p>Five fixes from a coverage-gap audit of areas not previously examined. Hotkeys using named or symbol keys (Escape, Delete, Page Up/Down, ".", backtick and more) now work across all keystroke backends; several silently did nothing on X11 before. Quitting no longer hangs if the app receives two termination signals in quick succession. And the optional dictation helper keeps its runtime files in a private per-user directory instead of the shared /tmp.</p>
+      </description>
+    </release>
     <release version="0.12.7" date="2026-07-24">
       <description>
         <p>Five fixes from a six-lens architecture audit, each reproduced before it was fixed and hardware-validated on the deck: the key editor no longer crashes if the deck changes page while you edit a key; switching pages no longer leaves a stale animation frame on a key; importing a configuration keeps the "Sleep deck with the screen" setting; animated keys and system-monitor keys on the same page can no longer corrupt each other on the display; and a password key's stored secret is removed from the keyring when its action type is changed away.</p>
