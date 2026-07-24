@@ -1,3 +1,17 @@
+fifine-control-deck (0.12.6) noble; urgency=medium
+
+  * The deck now blanks when the screen blanks and lights up again when
+    it wakes; a "Sleep deck with the screen" toggle in the menu controls
+    it (on by default)
+  * Importing a config now warns first when it contains keys that run a
+    shell command or launch a program, so a shared config cannot hide an
+    executable behind an innocent label and icon
+  * Hardening: a malformed or hostile imported config can no longer crash
+    the import (or the clear-key path), and a command hidden inside a
+    nested multi-step is now surfaced in the warning
+
+ -- ZoutMax <150600436+ZoutMax@users.noreply.github.com>  Fri, 24 Jul 2026 20:02:40 +0200
+
 fifine-control-deck (0.12.5ppa1) resolute; urgency=medium
 
   * Build for resolute (25.04). No source changes from 0.12.5.

@@ -44,6 +44,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.12.6" date="2026-07-24">
+      <description>
+        <p>The deck now blanks when the screen blanks and lights up again when it wakes, controlled by a "Sleep deck with the screen" toggle in the menu. Importing a config now warns first when it contains keys that run a shell command or launch a program, so a shared config cannot hide an executable behind an innocent label, and a malformed or hostile config can no longer crash the import.</p>
+      </description>
+    </release>
     <release version="0.12.5" date="2026-07-24">
       <description>
         <p>Fixes an unrecoverable startup crash when config.json contains an infinite number (Infinity/1e999) in brightness or version</p>
