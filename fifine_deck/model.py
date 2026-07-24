@@ -654,43 +654,78 @@ def _iter_step_action_dicts(params, _depth=0):
         yield from _iter_step_action_dicts(inner.get("params"), _depth + 1)
 
 
+def _action_secret_ids(a):
+    """Yield every keyring secret_id one action owns — directly (a "type
+    password" action) and through any multi-step sub-actions."""
+    if a is None:
+        return
+    params = getattr(a, "params", None)
+    if getattr(a, "type", None) == "password" and isinstance(params, dict):
+        sid = params.get("secret_id")
+        if sid:
+            yield sid
+    for inner in _iter_step_action_dicts(params):
+        if inner.get("type") == "password":
+            p = inner.get("params")
+            sid = p.get("secret_id") if isinstance(p, dict) else None
+            if sid:
+                yield sid
+
+
+def _iter_pages_secret_ids(pages):
+    """Yield every secret_id on the given pages' keys AND knobs, recursing into
+    any folders. Knobs and folder knobs count: a knob press/left/right can be a
+    "type password" action too, so a reconcile that skipped them would delete a
+    secret still in use."""
+    seen = set()
+    stack = list(pages)
+    while stack:
+        page = stack.pop()
+        if page is None:
+            continue
+        for kc in getattr(page, "keys", {}).values():
+            yield from _action_secret_ids(getattr(kc, "action", None))
+            yield from _action_secret_ids(getattr(kc, "hold_action", None))
+            folder = getattr(kc, "folder", None)
+            if folder is not None and id(folder) not in seen:
+                seen.add(id(folder))
+                stack.extend(getattr(folder, "pages", []))
+        for kn in getattr(page, "knobs", {}).values():
+            for slot in ("press", "left", "right"):
+                yield from _action_secret_ids(getattr(kn, slot, None))
+
+
 def iter_key_secret_ids(kc):
     """Yield every keyring secret_id a key owns — through its action, hold
-    action, any multi-step sub-actions, and any nested folder (recursively).
+    action, any multi-step sub-actions, and any nested folder (recursively,
+    including that folder's knobs).
 
     A "type password" action stores only a secret_id in the config; the secret
     itself lives in the OS keyring. Removing the key must delete that secret or
-    it orphans in the keyring forever (secret_store.delete otherwise has no
-    production caller). Used by the GUI's Clear-key path.
+    it orphans in the keyring forever. Used by the GUI's Clear-key path.
     """
-    def from_action(a):
-        if a is None:
-            return
-        params = getattr(a, "params", None)
-        if getattr(a, "type", None) == "password" and isinstance(params, dict):
-            sid = params.get("secret_id")
-            if sid:
-                yield sid
-        for inner in _iter_step_action_dicts(params):
-            if inner.get("type") == "password":
-                p = inner.get("params")
-                sid = p.get("secret_id") if isinstance(p, dict) else None
-                if sid:
-                    yield sid
+    if kc is None:
+        return
+    yield from _action_secret_ids(getattr(kc, "action", None))
+    yield from _action_secret_ids(getattr(kc, "hold_action", None))
+    folder = getattr(kc, "folder", None)
+    if folder is not None:
+        yield from _iter_pages_secret_ids(getattr(folder, "pages", []))
 
-    seen = set()
-    stack = [kc]
-    while stack:
-        k = stack.pop()
-        if k is None:
-            continue
-        yield from from_action(getattr(k, "action", None))
-        yield from from_action(getattr(k, "hold_action", None))
-        folder = getattr(k, "folder", None)
-        if folder is not None and id(folder) not in seen:
-            seen.add(id(folder))
-            for pg in getattr(folder, "pages", []):
-                stack.extend(pg.keys.values())
+
+def iter_config_secret_ids(config):
+    """Yield every keyring secret_id referenced ANYWHERE in the config — every
+    key and knob action (with their hold/multi-step sub-actions) on every page
+    of every profile, recursing into folders.
+
+    Used to reap a secret the config no longer references (e.g. after a password
+    key's action type is changed away). MUST be exhaustive: a missed reference
+    would delete a secret still in use, which is worse than the leak it fixes.
+    """
+    pages = []
+    for prof in getattr(config, "profiles", []):
+        pages.extend(getattr(prof, "pages", []))
+    yield from _iter_pages_secret_ids(pages)
 
 
 def iter_command_actions(config):

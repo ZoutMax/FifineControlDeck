@@ -9,7 +9,7 @@ import pytest
 
 from fifine_deck.model import (Action, CONFIG_VERSION, DeckConfig, Folder,
                                 KeyConfig, iter_command_actions,
-                                iter_key_secret_ids)
+                                iter_config_secret_ids, iter_key_secret_ids)
 
 
 def test_action_roundtrip():
@@ -758,6 +758,32 @@ def test_iter_command_actions_still_finds_plain_and_one_level_multi():
     one = {"type": "multi", "params": {"steps": [
         {"action": {"type": "run_command", "params": {"command": "id"}}}]}}
     assert [c for _, c in iter_command_actions(_cfg_with_action(one))] == ["id"]
+
+
+def test_iter_config_secret_ids_is_exhaustive():
+    """The secret reconcile deletes keyring entries NOT in this set, so it must
+    find EVERY secret_id the config references — key action, hold action,
+    multi-step, folder key, top-level knob, and folder knob — or it would delete
+    a password still in use. (maximum-audit safety regression)"""
+    def pw(sid):
+        return {"type": "password", "params": {"secret_id": sid}}
+    cfg = DeckConfig.from_dict({"profiles": [{"name": "P", "pages": [{
+        "keys": {
+            "1": {"action": pw("k_action")},
+            "2": {"action": {"type": "none"}, "hold_action": pw("k_hold")},
+            "3": {"action": {"type": "multi", "params": {"steps": [
+                {"action": pw("k_multi")}]}}},
+            "4": {"action": {"type": "open_folder"}, "folder": {"pages": [{
+                "keys": {"1": {"action": pw("folder_key")}},
+                "knobs": {"0": {"press": pw("folder_knob")}}}]}},
+        },
+        "knobs": {
+            "0": {"press": pw("knob_press"), "left": pw("knob_left"),
+                  "right": pw("knob_right")},
+        }}]}]})
+    assert set(iter_config_secret_ids(cfg)) == {
+        "k_action", "k_hold", "k_multi", "folder_key", "folder_knob",
+        "knob_press", "knob_left", "knob_right"}
 
 
 def test_iter_step_walk_terminates_on_a_cyclic_config():

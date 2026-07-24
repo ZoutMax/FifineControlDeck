@@ -1805,6 +1805,53 @@ def test_clearing_a_password_key_deletes_its_keyring_secret(win, monkeypatch):
         f"password secrets not deleted on clear: {deleted}"
 
 
+def test_type_change_reaps_orphaned_secret_on_save(win, monkeypatch):
+    """Changing a password key's action type away drops its secret_id from the
+    config; the reap-on-save deletes that now-orphaned keyring secret, while
+    keeping secrets still referenced by OTHER keys. (maximum-audit regression)"""
+    from fifine_deck import secret_store
+    deleted = []
+    monkeypatch.setattr(secret_store, "delete", lambda sid: deleted.append(sid))
+    w, cfg, c = win
+    monkeypatch.setattr(cfg, "save", lambda *a, **k: None)   # isolate from disk
+    page = cfg.active_profile().pages[0]
+    page.key(1).action = mw.Action("password", {"secret_id": "pw-1"})
+    page.key(2).action = mw.Action("password", {"secret_id": "pw-2"})
+    w._owned_secret_ids = set(mw.iter_config_secret_ids(cfg))   # as if just saved
+    assert {"pw-1", "pw-2"} <= w._owned_secret_ids
+    page.key(1).action = mw.Action("hotkey", {"keys": "ctrl+c"})   # change away
+    w._autosave()
+    assert deleted == ["pw-1"]                 # the orphaned one is reaped
+    assert "pw-2" in w._owned_secret_ids       # the still-used one survives
+    assert "pw-1" not in w._owned_secret_ids
+
+
+def test_import_does_not_reap_secrets_referenced_by_the_backup(win, monkeypatch,
+                                                               tmp_path):
+    """Import writes a pre-import backup that still references the OLD secrets,
+    so import must adopt the imported config's secrets WITHOUT deleting the old
+    ones — else a restore-from-backup finds its passwords gone. (maximum-audit)"""
+    import json as _json
+    from fifine_deck import secret_store
+    deleted = []
+    monkeypatch.setattr(secret_store, "delete", lambda sid: deleted.append(sid))
+    w, cfg, c = win
+    monkeypatch.setattr(cfg, "save", lambda *a, **k: None)   # isolate from disk
+    cfg.active_profile().pages[0].key(1).action = mw.Action(
+        "password", {"secret_id": "pw-old"})
+    w._owned_secret_ids = set(mw.iter_config_secret_ids(cfg))
+    assert "pw-old" in w._owned_secret_ids
+    donor = DeckConfig()                        # a different config, no pw-old
+    path = tmp_path / "donor.json"
+    path.write_text(_json.dumps(donor.to_dict()))
+    monkeypatch.setattr(mw.QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(path), "")))
+    _AutoBox.answer = QMessageBox.StandardButton.Yes
+    w._import_config()
+    assert deleted == []                        # backup still references pw-old
+    assert "pw-old" not in w._owned_secret_ids  # but it is no longer "owned"
+
+
 def test_import_warns_about_command_running_keys(win, monkeypatch, tmp_path):
     """Security-audit hardening: importing a config that contains keys which run
     shell commands / launch programs must say so in the confirm dialog, since an

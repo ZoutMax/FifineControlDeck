@@ -16,6 +16,7 @@ a clean, Pythonic interface to the underlying C API.
 import os
 import ctypes
 import platform
+import threading
 from ctypes import (
     POINTER,
     c_size_t,
@@ -424,6 +425,15 @@ class LibUSBHIDAPI:
         # CRITICAL: Store device_info properly for resource management
         self._device_info = device_info
         self._is_open = False
+        # Serializes the multi-packet IMAGE writes below. libtransport is not
+        # safe for two concurrent writes on one handle: the GIF animation worker
+        # writes on its own thread while the render/monitor thread writes under
+        # the app's controller lock, so without this their packet sequences can
+        # interleave on the wire and corrupt a key or wedge it. A LEAF lock held
+        # only around the C call — never across a thread join — so it cannot
+        # deadlock the shutdown path that joins the GIF worker. The blocking
+        # read() deliberately does NOT take it, so input never stalls writes.
+        self._io_lock = threading.RLock()
 
         # Don't create handle immediately, wait for open() call
         # This maintains compatibility with the existing StreamDock API
@@ -563,7 +573,8 @@ class LibUSBHIDAPI:
         """Refresh the screen display."""
         if not self._handle:
             return
-        _transport_lib.transport_refresh(self._handle)
+        with self._io_lock:
+            _transport_lib.transport_refresh(self._handle)
 
     def sleep(self) -> None:
         """Put the device into sleep mode."""
@@ -582,13 +593,15 @@ class LibUSBHIDAPI:
         """
         if not self._handle:
             return
-        _transport_lib.transport_set_key_brightness(self._handle, brightness)
+        with self._io_lock:
+            _transport_lib.transport_set_key_brightness(self._handle, brightness)
 
     def clear_all_keys(self) -> None:
         """Clear all keys on the device."""
         if not self._handle:
             return
-        _transport_lib.transport_clear_all_keys(self._handle)
+        with self._io_lock:
+            _transport_lib.transport_clear_all_keys(self._handle)
 
     def clear_key(self, key_index: int) -> None:
         """
@@ -599,7 +612,8 @@ class LibUSBHIDAPI:
         """
         if not self._handle:
             return
-        _transport_lib.transport_clear_key(self._handle, key_index)
+        with self._io_lock:
+            _transport_lib.transport_clear_key(self._handle, key_index)
 
     # ========== Image Transfer ==========
 
@@ -613,9 +627,10 @@ class LibUSBHIDAPI:
         """
         if not self._handle:
             return
-        _transport_lib.transport_set_background_bitmap(
-            self._handle, bitmap_data, len(bitmap_data), timeout_ms
-        )
+        with self._io_lock:
+            _transport_lib.transport_set_background_bitmap(
+                self._handle, bitmap_data, len(bitmap_data), timeout_ms
+            )
 
     def set_key_image_stream(self, jpeg_data: bytes, key_index: int) -> None:
         """
@@ -627,9 +642,10 @@ class LibUSBHIDAPI:
         """
         if not self._handle:
             return
-        res = _transport_lib.transport_set_key_image_stream(
-            self._handle, jpeg_data, len(jpeg_data), key_index
-        )
+        with self._io_lock:
+            res = _transport_lib.transport_set_key_image_stream(
+                self._handle, jpeg_data, len(jpeg_data), key_index
+            )
         return res
 
     def set_background_image_stream(
@@ -644,9 +660,10 @@ class LibUSBHIDAPI:
         """
         if not self._handle:
             return
-        _transport_lib.transport_set_background_image_stream(
-            self._handle, jpeg_data, len(jpeg_data), timeout_ms
-        )
+        with self._io_lock:
+            _transport_lib.transport_set_background_image_stream(
+                self._handle, jpeg_data, len(jpeg_data), timeout_ms
+            )
 
     def set_background_frame_stream(
         self,
@@ -670,9 +687,10 @@ class LibUSBHIDAPI:
         """
         if not self._handle:
             return
-        _transport_lib.transport_set_background_frame_stream(
-            self._handle, jpeg_data, len(jpeg_data), width, height, x, y, fb_layer
-        )
+        with self._io_lock:
+            _transport_lib.transport_set_background_frame_stream(
+                self._handle, jpeg_data, len(jpeg_data), width, height, x, y, fb_layer
+            )
 
     def clear_background_frame_stream(self, position: int = 0x03) -> None:
         """
@@ -683,7 +701,8 @@ class LibUSBHIDAPI:
         """
         if not self._handle:
             return
-        _transport_lib.transport_clear_background_frame_stream(self._handle, position)
+        with self._io_lock:
+            _transport_lib.transport_clear_background_frame_stream(self._handle, position)
 
     # ========== LED Control ==========
 
@@ -887,7 +906,8 @@ class LibUSBHIDAPI:
         """Send a heartbeat packet to the device."""
         if not self._handle:
             return
-        _transport_lib.transport_heartbeat(self._handle)
+        with self._io_lock:
+            _transport_lib.transport_heartbeat(self._handle)
 
     # ========== Report Configuration ==========
 

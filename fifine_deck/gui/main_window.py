@@ -16,7 +16,8 @@ from PyQt6.QtWidgets import (
 from .. import rendering, assets
 from ..device import DEVICE_PROFILE
 from ..model import (DeckConfig, Profile, Page, KeyConfig, Action, Folder,
-                     _next_backup_path, _page_loss_summary)
+                     iter_config_secret_ids, _next_backup_path,
+                     _page_loss_summary)
 from ..actions import default_icon_for
 from ..controller import DeckController
 from .widgets import (KeyButton, ActionEditor, ActionCatalog, KnobEditor,
@@ -42,6 +43,11 @@ class MainWindow(QMainWindow):
         self.controller = controller
         self.buttons: dict[int, KeyButton] = {}
         self.selected_index: int | None = None
+        # Every keyring secret_id the config currently references. After a save
+        # we delete any that dropped out (e.g. a password key whose action type
+        # was changed away) so they do not orphan in the keyring. Reconciled
+        # against the WHOLE config, so a secret still used elsewhere is kept.
+        self._owned_secret_ids: set[str] = set(iter_config_secret_ids(config))
 
         self.setWindowTitle("fifine Control Deck")
         self.resize(1000, 620)
@@ -349,6 +355,11 @@ class MainWindow(QMainWindow):
                 f"written to disk:\n{e}\n\nYour previous configuration is at\n"
                 f"{backup}")
             return
+        # Adopt the imported config's secrets as owned WITHOUT reaping the old
+        # ones: the pre-import backup we just wrote still references them, so
+        # deleting them would break a restore-from-backup. (This is why the
+        # audit flagged the reap as correct for a type-change but NOT for import.)
+        self._owned_secret_ids = set(iter_config_secret_ids(self.config))
         self.statusBar().showMessage(f"Configuration imported (backup: {backup})", 6000)
 
     def show_and_raise(self):
@@ -1137,6 +1148,31 @@ class MainWindow(QMainWindow):
                 "(or run 'fifine-control-deck').\n"
                 "• Quit completely: Options → Quit  (Ctrl+Q).")
 
+    def _reap_orphan_secrets(self):
+        """Delete keyring secrets the config no longer references.
+
+        Runs AFTER a successful save, so the on-disk config and the keyring
+        never diverge (delete-before-save could strand a live binding if the
+        save then failed). Reconciled against the WHOLE config via
+        iter_config_secret_ids, so a secret still used by any other key or knob
+        is kept — only genuinely dropped ones (e.g. a password key whose action
+        type was changed to something else) are removed."""
+        try:
+            current = set(iter_config_secret_ids(self.config))
+            dropped = self._owned_secret_ids - current
+            if dropped:
+                from .. import secret_store
+                for sid in dropped:
+                    try:
+                        secret_store.delete(sid)
+                    except Exception:
+                        log.debug("reaping orphan secret %s failed", sid,
+                                  exc_info=True)
+            self._owned_secret_ids = current
+        except Exception:
+            # Reaping is best-effort housekeeping; never let it break a save.
+            log.debug("secret reconcile failed", exc_info=True)
+
     def _autosave(self):
         """Persist the config; a failure (disk full, permissions) must be
         VISIBLE — silently dropping the user's edits is the worst outcome —
@@ -1147,6 +1183,8 @@ class MainWindow(QMainWindow):
             log.error("autosave failed: %s", e)
             self.statusBar().showMessage(
                 f"⚠ Could not save configuration: {e}", 10000)
+            return
+        self._reap_orphan_secrets()
 
     def _quit(self):
         try:
