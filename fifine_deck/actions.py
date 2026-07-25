@@ -377,10 +377,15 @@ def _send_hotkey(combo: str) -> None:
                    "altgr": "altgr"}
         mods = [p.strip().lower() for p in parts[:-1]]
         key = _to_x_keysym(parts[-1])           # canonical keysym, keep its case
-        # ...but "super" is an xdotool alias, not an xkbcommon keysym name, so
-        # a bare super/win key needs wtype's own spelling.
-        if key == "super":
-            key = "Super_L"
+        # ...but the modifier ALIASES are xdotool spellings, not xkbcommon
+        # keysym names, so a combo ending in a bare modifier ("alt+shift", the
+        # layout toggle, or a lone "ctrl") made wtype exit before emitting
+        # anything. Give them their real keysym names.
+        key = {"super": "Super_L", "logo": "Super_L", "win": "Super_L",
+               "meta": "Super_L", "ctrl": "Control_L", "control": "Control_L",
+               "alt": "Alt_L", "shift": "Shift_L",
+               "ctrl_r": "Control_R", "shift_r": "Shift_R",
+               "alt_r": "Alt_R"}.get(key.lower(), key)
         args = ["wtype"]
         for m in mods:
             args += ["-M", _modmap.get(m, m)]
@@ -426,14 +431,21 @@ def _type_text(text: str) -> None:
                     "nothing was typed")
         return
     data = text.encode()
+    # Typing is inherently slow — ydotool defaults to ~40 ms per character —
+    # so _run's 8 s default killed a long snippet mid-way (~200 chars) and left
+    # half a line in the user's document with only a log line. Scale the budget
+    # to the payload; the editor deliberately offers a multiline text field.
+    timeout = max(8, int(len(text) * 0.06) + 5)
     if KEY_TOOL == "xdotool":
-        _run(["xdotool", "type", "--clearmodifiers", "--file", "-"], input_text=data)
+        _run(["xdotool", "type", "--clearmodifiers", "--file", "-"],
+             input_text=data, timeout=timeout)
     elif KEY_TOOL == "wtype":
-        _run(["wtype", "-"], input_text=data)
+        _run(["wtype", "-"], input_text=data, timeout=timeout)
     elif KEY_TOOL == "ydotool":
         # /dev/stdin, not "-": see the docstring — legacy ydotool 0.1.8
         # fopen()s a literal "-" and silently types nothing.
-        _run(["ydotool", "type", "--file", "/dev/stdin"], input_text=data)
+        _run(["ydotool", "type", "--file", "/dev/stdin"],
+             input_text=data, timeout=timeout)
 
 
 def _close_app(target: str) -> None:

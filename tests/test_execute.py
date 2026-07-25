@@ -487,3 +487,32 @@ def test_wtype_maps_right_hand_modifiers_and_super(monkeypatch):
     actions._send_hotkey("ctrl+shift+m")
     assert calls[-1] == ["wtype", "-M", "ctrl", "-M", "shift", "-k", "m",
                          "-m", "ctrl", "-m", "shift"]
+
+
+def test_wtype_resolves_a_trailing_bare_modifier(monkeypatch):
+    """"alt+shift" (the layout toggle) and a lone "ctrl" end on a modifier
+    ALIAS, which is an xdotool spelling, not an xkbcommon keysym name — wtype
+    exited before emitting anything and the combo vanished. (round-8 audit)"""
+    calls = []
+    monkeypatch.setattr(actions, "KEY_TOOL", "wtype")
+    monkeypatch.setattr(actions, "_run", lambda argv, **k: calls.append(argv))
+    actions._send_hotkey("alt+shift")
+    assert calls[-1] == ["wtype", "-M", "alt", "-k", "Shift_L", "-m", "alt"]
+    actions._send_hotkey("ctrl")
+    assert calls[-1] == ["wtype", "-k", "Control_L"]
+    actions._send_hotkey("Super")            # capitals skipped the old guard
+    assert calls[-1] == ["wtype", "-k", "Super_L"]
+
+
+def test_type_text_timeout_scales_with_the_payload(monkeypatch):
+    """_run caps every child at 8 s, and typing runs ~40 ms/char on ydotool, so
+    a long snippet was killed mid-way (~200 chars) leaving half a line in the
+    user's document with only a log line. (round-8 audit)"""
+    seen = {}
+    monkeypatch.setattr(actions, "KEY_TOOL", "ydotool")
+    monkeypatch.setattr(actions, "_run",
+                        lambda argv, **k: seen.update(k))
+    actions._type_text("x" * 1000)
+    assert seen.get("timeout", 8) > 8, "a 1000-char payload still uses the 8 s cap"
+    actions._type_text("short")
+    assert seen.get("timeout") >= 8, "short text must keep at least the default"

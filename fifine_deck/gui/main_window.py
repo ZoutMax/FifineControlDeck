@@ -297,7 +297,11 @@ class MainWindow(QMainWindow):
                 raise ValueError("this file does not look like a deck configuration")
             imported = DeckConfig.from_dict(data)
         except (OSError, ValueError, TypeError, KeyError, AttributeError,
-                json.JSONDecodeError) as e:
+                RecursionError, json.JSONDecodeError) as e:
+            # RecursionError (a RuntimeError, so not covered by the rest) comes
+            # from deeply nested JSON — folders nest without bound. Escaping
+            # this slot made Import silently do nothing; DeckConfig.load
+            # already guards the same shape.
             QMessageBox.warning(self, "Import failed",
                                 f"Not a valid configuration file:\n{e}")
             return
