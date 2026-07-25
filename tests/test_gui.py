@@ -2057,3 +2057,24 @@ def test_quit_reaps_secrets_dropped_in_the_debounce_window(win, monkeypatch):
     page.key(1).action = mw.Action("none", {})     # dropped; debounce armed
     w._quit()                                      # quit before the timer fires
     assert deleted == ["pw-q"], "secret orphaned by quitting inside the debounce"
+
+
+def test_a_newline_in_a_label_does_not_break_rendering():
+    """A pasted two-line label crashed render_key (Pillow refuses to measure
+    multiline text), and every GUI render path was unguarded — including
+    MainWindow.__init__ — so once such a label reached config.json the window
+    could never open again. (round-10 audit, HIGH)"""
+    from fifine_deck import rendering
+    for label in ("Mute\nMic", "Hello\n\nWorld", "trailing\n", "\n", "  "):
+        img = rendering.render_key(96, label)
+        assert img is not None, f"render_key failed on {label!r}"
+
+
+def test_label_field_rejects_pasted_newlines(win):
+    """QLineEdit keeps '\\n' on paste (it only blocks typing one), so the field
+    itself must refuse it — what the user sees is what the key shows."""
+    w, cfg, c = win
+    kc = cfg.active_profile().pages[0].key(1)
+    w.editor.set_key(kc, 1)
+    w.editor.label_edit.setText("Mute\nMic")
+    assert "\n" not in w.editor.label_edit.text()

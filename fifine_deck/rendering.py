@@ -83,6 +83,14 @@ def render_key(
             log.warning("icon %s could not be decoded: %s", icon_path, e)
 
     if label:
+        # Pillow's textlength() REFUSES multiline text (ValueError), and a
+        # newline reaches here easily: Qt's QLineEdit keeps '\n' on paste, and
+        # an imported or hand-edited config can carry one. That raised through
+        # every GUI render path into MainWindow.__init__, so once such a label
+        # was saved the window could never open again. Fold newlines into
+        # spaces and let _wrap lay the label out for the key.
+        label = " ".join(label.split())
+    if label:
         draw = ImageDraw.Draw(img)
         base_fs = max(10, int(size * (0.20 if icon_path else 0.24)))
         max_w = size - 6

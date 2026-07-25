@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QMimeData, QPoint, QObject, QEvent
-from PyQt6.QtGui import QPixmap, QColor, QIcon, QDrag
+from PyQt6.QtCore import (Qt, pyqtSignal, QSize, QMimeData, QPoint, QObject,
+                          QEvent, QRegularExpression)
+from PyQt6.QtGui import (QPixmap, QColor, QIcon, QDrag,
+                         QRegularExpressionValidator)
 from PyQt6.QtWidgets import (
     QToolButton, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
     QLineEdit, QPlainTextEdit, QComboBox, QPushButton, QColorDialog, QFileDialog,
@@ -774,6 +776,11 @@ class ActionEditor(QWidget):
 
         form = QFormLayout()
         self.label_edit = QLineEdit()
+        # QLineEdit keeps '\n' on paste (it only blocks TYPING one), and a
+        # newline in a label used to crash every render. Strip it at the door
+        # so what the user sees is what the key will show.
+        self.label_edit.setValidator(
+            QRegularExpressionValidator(QRegularExpression(r"[^\r\n]*")))
         self.label_edit.textChanged.connect(self._on_edit)
         form.addRow("Label", self.label_edit)
 
@@ -998,7 +1005,16 @@ class ActionEditor(QWidget):
             self._building = True
             self.icon_edit.setText(new_default)
             self._building = False
-        self._kc.label = self.label_edit.text()
+        # Never let a newline reach the model: the validator covers typing and
+        # pasting, but setText() (an imported config, a restored key) bypasses
+        # it, and a multiline label used to crash every render.
+        label_text = self.label_edit.text()
+        if "\n" in label_text or "\r" in label_text:
+            label_text = " ".join(label_text.split())
+            self._building = True
+            self.label_edit.setText(label_text)
+            self._building = False
+        self._kc.label = label_text
         self._kc.icon = self.icon_edit.text()
         self._kc.bg_color = self.bg_btn.color()
         self._kc.text_color = self.fg_btn.color()
