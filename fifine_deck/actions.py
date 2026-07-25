@@ -315,7 +315,11 @@ def _ydotool_keycodes(combo: str):
 # Tokens not listed pass through unchanged: single letters/digits are valid
 # keysyms, and ctrl/alt/shift/super are xdotool modifier aliases.
 _X_KEYSYM = {
-    "esc": "Escape", "del": "Delete", "ins": "Insert",
+    "esc": "Escape", "escape": "Escape",
+    "del": "Delete", "delete": "Delete",
+    "ins": "Insert", "insert": "Insert",
+    "tab": "Tab", "return": "Return", "space": "space",
+    "ctrl_r": "Control_R", "shift_r": "Shift_R", "alt_r": "Alt_R",
     "pgup": "Prior", "pageup": "Prior", "pgdn": "Next", "pagedown": "Next",
     "enter": "Return", "backspace": "BackSpace", "capslock": "Caps_Lock",
     "printscreen": "Print", "print": "Print",
@@ -330,9 +334,21 @@ _X_KEYSYM = {
 
 
 def _to_x_keysym(part: str) -> str:
-    """Map one hotkey token to the X keysym name xdotool/wtype expect."""
+    """Map one hotkey token to the X keysym name xdotool/wtype expect.
+
+    X's name lookup is CASE-SENSITIVE: a lowercase "tab" or "f5" resolves to
+    nothing and the backend drops the token without a word (its stderr is
+    devnulled), pressing the remaining modifiers bare. So the app vocabulary
+    is normalised here; function keys get their uppercase F programmatically.
+    """
     p = part.strip()
-    return _X_KEYSYM.get(p.lower(), p)
+    low = p.lower()
+    if low in _X_KEYSYM:
+        return _X_KEYSYM[low]
+    if len(low) in (2, 3) and low[0] == "f" and low[1:].isdigit() \
+            and 1 <= int(low[1:]) <= 24:
+        return "F" + low[1:]
+    return p
 
 
 def _send_hotkey(combo: str) -> None:

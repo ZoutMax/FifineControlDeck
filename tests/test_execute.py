@@ -156,11 +156,15 @@ def test_hotkey_canonicalizes_keysyms_for_xdotool(monkeypatch):
     calls = []
     monkeypatch.setattr(actions, "KEY_TOOL", "xdotool")
     monkeypatch.setattr(actions, "_run", lambda argv, **k: calls.append(argv))
-    for combo in ("ctrl+esc", "super+pgup", "ctrl+shift+del", "alt+.", "ctrl+`"):
+    for combo in ("ctrl+esc", "super+pgup", "ctrl+shift+del", "alt+.", "ctrl+`",
+                  "alt+tab", "ctrl+f5", "ctrl+escape", "shift_r+a", "ctrl+f24"):
         actions._send_hotkey(combo)
     sent = [argv[3] for argv in calls]      # ["xdotool","key","--clearmodifiers",combo]
     assert sent == ["ctrl+Escape", "super+Prior", "ctrl+shift+Delete",
-                    "alt+period", "ctrl+grave"]
+                    "alt+period", "ctrl+grave",
+                    # round-6 audit: X lookup is case-sensitive, so these
+                    # lowercase tokens silently injected nothing on X11
+                    "alt+Tab", "ctrl+F5", "ctrl+Escape", "Shift_R+a", "ctrl+F24"]
     # a plain combo passes through untouched
     calls.clear(); actions._send_hotkey("ctrl+c")
     assert calls[0][3] == "ctrl+c"
