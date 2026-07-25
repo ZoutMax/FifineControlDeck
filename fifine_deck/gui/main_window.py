@@ -160,9 +160,11 @@ class MainWindow(QMainWindow):
             # The write/remove failed (full disk, bad permissions): say so and
             # resync the checkbox to what is actually on disk, or the menu
             # claims a state that does not exist.
-            self.statusBar().showMessage(
-                "⚠ Could not update the start-on-login entry — check "
-                "~/.config/autostart permissions", 10000)
+            sb = self.statusBar()
+            if sb is not None:
+                sb.showMessage(
+                    "⚠ Could not update the start-on-login entry — check "
+                    "~/.config/autostart permissions", 10000)
             self.autostart_act.blockSignals(True)
             try:
                 self.autostart_act.setChecked(os.path.exists(autostart_file()))
