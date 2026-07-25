@@ -679,8 +679,13 @@ class _StepRow(QFrame):
         drow.addWidget(self.delay)
         drow.addStretch()
         v.addLayout(drow)
-        if step:
-            self.apw.set_action(Action.from_dict(step.get("action", {})))
+        if isinstance(step, dict):
+            # step.get("action", step) — NOT a {} default: a step may be stored
+            # as a bare action dict, and the executor, the secret walker and
+            # the cleartext scanner all unwrap it that way. Reading one level
+            # too shallow showed "— None —" here and, since any edit rewrites
+            # the whole action, silently destroyed the real sub-action.
+            self.apw.set_action(Action.from_dict(step.get("action", step)))
             try:
                 self.delay.setValue(float(step.get("delay", 0) or 0))
             except (TypeError, ValueError):
@@ -740,8 +745,16 @@ class MultiStepsEditor(QWidget):
             r.setParent(None)
             r.deleteLater()
         self._rows = []
-        for st in (steps or []):
-            self._add_row(st)
+        # Tolerate malformed shapes exactly like every other steps consumer
+        # (actions.execute, model._iter_step_action_dicts, the cleartext
+        # scanner): an imported or hand-edited config can carry a string, a
+        # number, or a list holding non-dicts, and it loads, runs and scans
+        # fine — only selecting the key used to raise, inside a Qt slot.
+        if not isinstance(steps, (list, tuple)):
+            steps = []
+        for st in steps:
+            if isinstance(st, dict):
+                self._add_row(st)
 
     def get_steps(self, peek: bool = False) -> list:
         return [r.value(peek) for r in self._rows]
@@ -827,6 +840,16 @@ class ActionEditor(QWidget):
 
     def set_key(self, kc: KeyConfig, index: int):
         self._building = True
+        try:
+            self._set_key(kc, index)
+        finally:
+            # ALWAYS clear the flag. Anything raising in between used to leave
+            # the panel enabled and bound to the key while _on_edit returned
+            # early on _building, so every later edit to that key was silently
+            # swallowed — the grid and the panel both claiming it was selected.
+            self._building = False
+
+    def _set_key(self, kc: KeyConfig, index: int):
         self._kc = kc
         self._index = index
         self.setEnabled(True)
@@ -846,7 +869,6 @@ class ActionEditor(QWidget):
         # otherwise write the keyring / pop the cleartext warning).
         self._last_action = self.params.get_action(peek=True)
         self._last_action_sig = self._action_sig(self._last_action)
-        self._building = False
 
     @staticmethod
     def _action_sig(action: Action) -> tuple:

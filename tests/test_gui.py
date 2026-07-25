@@ -2078,3 +2078,40 @@ def test_label_field_rejects_pasted_newlines(win):
     w.editor.set_key(kc, 1)
     w.editor.label_edit.setText("Mute\nMic")
     assert "\n" not in w.editor.label_edit.text()
+
+
+@pytest.mark.parametrize("steps", [
+    "abc", 5, ["notadict"], [7, None], {"not": "a list"},
+])
+def test_selecting_a_key_with_malformed_steps_does_not_break_the_editor(win, steps):
+    """Every other steps consumer tolerates these shapes (executor, secret
+    walker, cleartext scanner), so such a config loads, runs and scans fine —
+    only CLICKING the key used to raise inside the Qt slot, leaving the editor
+    stuck in _building so every later edit was silently swallowed.
+    (round-11 audit)"""
+    w, cfg, c = win
+    kc = cfg.active_profile().pages[0].key(3)
+    kc.action = mw.Action("multi", {"steps": steps})
+    w.editor.set_key(kc, 3)
+    assert w.editor._building is False, "editor left in the building state"
+    # and the editor still accepts edits for that key
+    w.editor.label_edit.setText("edited")
+    assert kc.label == "edited", "edits were silently swallowed"
+
+
+def test_a_bare_form_step_survives_an_unrelated_edit(win):
+    """A step may be stored as a bare action dict; the executor and both
+    scanners unwrap it that way. The step editor read one level too shallow,
+    so it showed "None" and the first unrelated edit (typing a label) rewrote
+    the step from empty widgets, destroying the real sub-action.
+    (round-11 audit)"""
+    w, cfg, c = win
+    kc = cfg.active_profile().pages[0].key(4)
+    kc.action = mw.Action("multi", {"steps": [
+        {"type": "run_command", "params": {"command": "echo hello"}}]})
+    w.editor.set_key(kc, 4)
+    w.editor.label_edit.setText("touched")          # unrelated edit
+    step = kc.action.params["steps"][0]
+    inner = step.get("action", step)
+    assert inner.get("type") == "run_command", f"sub-action destroyed: {step}"
+    assert inner.get("params", {}).get("command") == "echo hello"
