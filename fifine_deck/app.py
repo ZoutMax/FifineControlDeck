@@ -305,6 +305,29 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
                 if takeover_fd is not None:
                     break
                 _time.sleep(0.2)
+        elif _LAST_CMD_REPLY is None and isinstance(handoff, str) \
+                and handoff != _IPC_NAME:
+            # SILENCE covers two very different peers, and the "bye" window is
+            # tiny (only the single processEvents pump early in _quit): during
+            # the dominant ~2 s controller.stop() block nothing answers at all.
+            # Tell them apart by WATCHING the socket file we connected to — a
+            # dying instance unlinks it on exit within a few seconds, a healthy
+            # old build keeps it for its lifetime. File gone -> claim the lock
+            # and launch as the successor; still there -> a live old build has
+            # the deck, exit as before. (Never contend against a file that
+            # stays: that stole the role from healthy pre-flock builds.)
+            import time as _time
+            deadline = _time.monotonic() + 5.0
+            while _time.monotonic() < deadline:
+                if not os.path.exists(handoff):
+                    lk_deadline = _time.monotonic() + 3.0
+                    while _time.monotonic() < lk_deadline:
+                        takeover_fd = _acquire_instance_lock()
+                        if takeover_fd is not None:
+                            break
+                        _time.sleep(0.2)
+                    break
+                _time.sleep(0.2)
         if takeover_fd is None:
             # "ok" (healthy — it handled the command), or NO reply (an old
             # build without the protocol, or a teardown so deep nothing pumps

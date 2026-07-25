@@ -325,21 +325,51 @@ def test_bye_handoff_takes_over_the_dying_instances_lock(monkeypatch, tmp_path):
         app.run_gui(hidden=False)      # continued launching = correct takeover
 
 
-def test_silent_handoff_exits_without_taking_the_lock(monkeypatch):
-    """NO reply means an old build (or a teardown too deep to answer): the
-    launch must exit at once — never contend for a lock a healthy old build
-    legitimately holds (that stole the single-instance role and launched a
-    duplicate), and never add seconds of stall to the common hand-off.
-    (round-4 audit)"""
+def test_silent_handoff_with_persistent_socket_exits_without_the_lock(
+        monkeypatch, tmp_path):
+    """NO reply + the socket file STAYING put means a healthy old build has the
+    deck: the launch must exit and never contend for its lock (that stole the
+    single-instance role and launched a duplicate). (rounds 4+5)"""
     from fifine_deck import app
+    sockfile = tmp_path / "old.sock"
+    sockfile.write_text("")            # a healthy old build keeps its socket
 
     def silent_instance(cmd):
         app._LAST_CMD_REPLY = None     # connection accepted, nobody answered
         app._LAST_CMD_ACKED = False
-        return "/run/user/1000/x.sock"
+        return str(sockfile)
 
     monkeypatch.setattr(app, "_signal_existing", silent_instance)
     monkeypatch.setattr(
         app, "_acquire_instance_lock",
-        lambda: pytest.fail("must not contend for the lock on a silent handoff"))
-    assert app.run_gui(hidden=False) == 0
+        lambda: pytest.fail("must not contend while the socket file persists"))
+    assert app.run_gui(hidden=False) == 0    # (waits out the 5 s watch window)
+
+
+def test_silent_handoff_with_vanishing_socket_takes_over(monkeypatch, tmp_path):
+    """NO reply + the socket file DISAPPEARING means the peer was mid-teardown
+    (its event loop blocked in controller.stop(), so it could not even say
+    bye): the launch must claim the freed lock and carry on as the successor —
+    exiting there left the user with no app after a quit-then-relaunch.
+    (round-5 audit)"""
+    from fifine_deck import app
+    sockfile = tmp_path / "dying.sock"
+    sockfile.write_text("")
+
+    def silent_instance(cmd):
+        app._LAST_CMD_REPLY = None
+        app._LAST_CMD_ACKED = False
+        sockfile.unlink()              # the dying instance cleans up and exits
+        return str(sockfile)
+
+    monkeypatch.setattr(app, "_signal_existing", silent_instance)
+    monkeypatch.setattr(app, "_acquire_instance_lock", lambda: 99)
+
+    class _Bail(Exception):
+        pass
+
+    import PyQt6.QtWidgets as qtw
+    monkeypatch.setattr(qtw, "QApplication",
+                        lambda *a, **k: (_ for _ in ()).throw(_Bail()))
+    with pytest.raises(_Bail):
+        app.run_gui(hidden=False)      # continued launching = correct takeover
