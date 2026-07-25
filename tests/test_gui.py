@@ -1852,7 +1852,8 @@ def test_type_change_reaps_orphaned_secret_on_save(win, monkeypatch):
     keeping secrets still referenced by OTHER keys. (maximum-audit regression)"""
     from fifine_deck import secret_store
     deleted = []
-    monkeypatch.setattr(secret_store, "delete", lambda sid: deleted.append(sid))
+    monkeypatch.setattr(secret_store, "delete",
+                        lambda sid: (deleted.append(sid), True)[1])
     w, cfg, c = win
     monkeypatch.setattr(cfg, "save", lambda *a, **k: None)   # isolate from disk
     page = cfg.active_profile().pages[0]
@@ -2007,3 +2008,52 @@ def test_sleep_with_screen_toggle_persists_and_wakes_on_disable(win):
     assert woke == [1], "disabling must wake the deck so it isn't stuck dark"
     w._set_sleep_with_screen(True)
     assert cfg.sleep_with_screen is True
+
+
+def test_reap_retries_a_failed_keyring_delete(win, monkeypatch):
+    """delete() against a locked keyring returns False; the reap must keep the
+    id owned so the delete retries on the next successful save, instead of
+    forgetting it forever. (wide-audit)"""
+    from fifine_deck import secret_store
+    deleted, fail = [], {"on": True}
+
+    def flaky_delete(sid):
+        if fail["on"]:
+            return False
+        deleted.append(sid)
+        return True
+
+    monkeypatch.setattr(secret_store, "delete", flaky_delete)
+    w, cfg, c = win
+    monkeypatch.setattr(cfg, "save", lambda *a, **k: None)
+    page = cfg.active_profile().pages[0]
+    page.key(1).action = mw.Action("password", {"secret_id": "pw-r"})
+    w._autosave()                                  # adopt
+    page.key(1).action = mw.Action("none", {})     # drop the reference
+    w._autosave()                                  # delete FAILS (locked)
+    assert deleted == [] and "pw-r" in w._owned_secret_ids, \
+        "failed delete was forgotten instead of kept for retry"
+    fail["on"] = False
+    w._autosave()                                  # keyring unlocked: retries
+    assert deleted == ["pw-r"] and "pw-r" not in w._owned_secret_ids
+
+
+def test_quit_reaps_secrets_dropped_in_the_debounce_window(win, monkeypatch):
+    """A secret dropped within the 600 ms debounce before Ctrl+Q was never
+    reaped: the timer dies with the app and the next launch's baseline cannot
+    see it. _quit must reap after its successful save. (wide-audit)"""
+    from PyQt6.QtWidgets import QApplication
+    from fifine_deck import secret_store
+    deleted = []
+    monkeypatch.setattr(secret_store, "delete",
+                        lambda sid: (deleted.append(sid), True)[1])
+    w, cfg, c = win
+    monkeypatch.setattr(cfg, "save", lambda *a, **k: None)
+    monkeypatch.setattr(c, "stop", lambda: None)
+    monkeypatch.setattr(QApplication, "quit", lambda *a, **k: None)
+    page = cfg.active_profile().pages[0]
+    page.key(1).action = mw.Action("password", {"secret_id": "pw-q"})
+    w._autosave()                                  # adopt
+    page.key(1).action = mw.Action("none", {})     # dropped; debounce armed
+    w._quit()                                      # quit before the timer fires
+    assert deleted == ["pw-q"], "secret orphaned by quitting inside the debounce"

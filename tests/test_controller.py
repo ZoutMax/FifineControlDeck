@@ -209,6 +209,9 @@ def test_page_keys_navigate_the_folder_when_inside_one():
         prof = c.config.active_profile()          # 1 page at profile root
         folder = Folder(name="F", pages=[Page(name="F1"), Page(name="F2"),
                                          Page(name="F3")])
+        # Attach it to a key: enter_folder now refuses a folder that is not
+        # reachable from the active profile (orphaned-container guard).
+        prof.pages[0].key(1).folder = folder
         c.enter_folder(folder)
         assert c.page().name == "F1"
         c.next_page()
@@ -822,3 +825,68 @@ def test_wake_screen_is_safe_with_no_device():
     c = DeckController(DeckConfig())
     c.wake_screen()          # must not raise with device is None
     c.stop()
+
+
+# ---------------------------------------------------------------------------
+# wide-audit round: navigation, unplug-hold race, flash restore
+# ---------------------------------------------------------------------------
+def test_enter_folder_refuses_an_orphaned_folder():
+    """A folder press queued behind a slow multi-action can land after the GUI
+    deleted its page; installing that orphaned container showed a location
+    whose edits never reach disk. enter_folder must refuse it."""
+    from fifine_deck.model import Folder, Page
+    c, dev = _connected()
+    try:
+        orphan = Folder(name="F", pages=[Page(name="F1")])   # attached nowhere
+        c.enter_folder(orphan)
+        assert c._nav == [] and c.page().name == "Main", \
+            "an unreachable folder was installed"
+    finally:
+        c.stop()
+
+
+def test_hold_armed_after_unplug_drain_self_cancels():
+    """Unplug race: _on_removed nulls the device then drains holds, but the
+    reader can arm a NEW hold just after the drain — it must self-cancel at the
+    arm site or the long-press fires against a gone device."""
+    from fifine_deck.model import Action
+    c, dev = _connected()
+    try:
+        kc = c.page().key(1)
+        kc.hold_action = Action("hotkey", {"keys": "a"})     # hold-capable key
+        with c._lock:
+            c.device = None                                   # unplug just landed
+        c._key_callback(dev, _btn(1))                         # press arrives late
+        assert c._holds == {}, "hold survived the unplug and would still fire"
+    finally:
+        c.stop()
+
+
+def test_flash_restores_even_if_glow_turned_off_mid_press():
+    """Unticking glow between press and release used to skip the restore,
+    freezing the brightened face behind a matching stale fingerprint."""
+    c, dev = _connected()
+    try:
+        writes_before = len(dev.key_images)
+        c.flash_key(1, pressed=True)                          # glow on: flashes
+        assert 1 in c._flashed
+        c.config.glow = False                                 # user unticks glow
+        c.flash_key(1, pressed=False)                         # release
+        assert 1 not in c._flashed, "restore did not run"
+        assert len(dev.key_images) >= writes_before, "no restore write happened"
+    finally:
+        c.stop()
+
+
+def test_flash_release_without_press_is_a_noop():
+    """The restore only runs for keys actually flashed: glow was off at press
+    time, so the release must not write anything."""
+    c, dev = _connected()
+    try:
+        c.config.glow = False
+        c.flash_key(1, pressed=True)                          # gated: no flash
+        n = dev.refreshes
+        c.flash_key(1, pressed=False)
+        assert dev.refreshes == n, "release wrote although nothing was flashed"
+    finally:
+        c.stop()

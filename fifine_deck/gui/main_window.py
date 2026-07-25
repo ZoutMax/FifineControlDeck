@@ -155,8 +155,19 @@ class MainWindow(QMainWindow):
             self.controller.wake_screen()
 
     def _set_autostart(self, on: bool):
-        from ..app import set_autostart
-        set_autostart(on)
+        from ..app import autostart_file, set_autostart
+        if set_autostart(on) != 0:
+            # The write/remove failed (full disk, bad permissions): say so and
+            # resync the checkbox to what is actually on disk, or the menu
+            # claims a state that does not exist.
+            self.statusBar().showMessage(
+                "⚠ Could not update the start-on-login entry — check "
+                "~/.config/autostart permissions", 10000)
+            self.autostart_act.blockSignals(True)
+            try:
+                self.autostart_act.setChecked(os.path.exists(autostart_file()))
+            finally:
+                self.autostart_act.blockSignals(False)
 
     def apply_autostart(self, enable: bool) -> bool:
         """Force the autostart entry to `enable` and resync the menu item.
@@ -1164,15 +1175,22 @@ class MainWindow(QMainWindow):
         try:
             current = set(iter_config_secret_ids(self.config))
             dropped = self._owned_secret_ids - current
+            failed = set()
             if dropped:
                 from .. import secret_store
                 for sid in dropped:
                     try:
-                        secret_store.delete(sid)
+                        if not secret_store.delete(sid):
+                            failed.add(sid)
                     except Exception:
+                        failed.add(sid)
                         log.debug("reaping orphan secret %s failed", sid,
                                   exc_info=True)
-            self._owned_secret_ids = current
+            # Keep FAILED ids owned so a delete that lost against a locked
+            # keyring retries on the next successful save, instead of being
+            # forgotten forever (the next launch re-baselines from the config,
+            # which no longer references them).
+            self._owned_secret_ids = current | failed
         except Exception:
             # Reaping is best-effort housekeeping; never let it break a save.
             log.debug("secret reconcile failed", exc_info=True)
@@ -1206,6 +1224,12 @@ class MainWindow(QMainWindow):
             # running with the controller half-stopped (Ctrl+Q previously
             # aborted here, stopping nothing).
             log.error("save on quit failed: %s", e)
+        else:
+            # A secret dropped within the 600 ms debounce window before quit
+            # would otherwise never be reaped: the armed timer dies with the
+            # app and the next launch's baseline cannot see it. Same
+            # after-successful-save ordering as _autosave.
+            self._reap_orphan_secrets()
         # Take the UI down BEFORE the teardown, so quit looks immediate.
         #
         # controller.stop() blocks ~2.0 s, and profiling attributes essentially

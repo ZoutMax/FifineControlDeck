@@ -120,10 +120,12 @@ def test_replacing_an_unreadable_password_reuses_the_id(qapp, keyring):
     assert keyring.values["pw-abc"] == "new"
 
 
-def test_replacing_under_a_fully_locked_keyring_falls_back_with_a_warning(qapp, keyring, warned):
+def test_replacing_under_a_fully_locked_keyring_keeps_the_secure_binding(qapp, keyring, warned):
     """A genuinely locked SecretService fails get() AND store(). Typing a
-    replacement then can only go to the cleartext fallback — which must warn,
-    because the user believes this password is stored securely."""
+    replacement must NOT demote the existing secure binding to cleartext:
+    doing so dropped secret_id, the next reap deleted the intact keyring copy,
+    and the cleartext file became the only copy — silently. The typed update
+    simply does not take; the old binding survives. (wide-audit finding)"""
     keyring.values["pw-abc"] = "old"
     keyring.readable = False
     keyring.store_ok = False
@@ -131,8 +133,9 @@ def test_replacing_under_a_fully_locked_keyring_falls_back_with_a_warning(qapp, 
     w._params["password"].setText("new")
 
     got = w.get_action()
-    assert got.params.get("password") == "new"
-    assert warned and "cleartext" in warned[0]
+    assert got.params.get("secret_id") == "pw-abc"      # binding preserved
+    assert "password" not in got.params                 # nothing in cleartext
+    assert not warned                                   # no plaintext modal
 
 
 def test_unreadable_secret_shows_a_placeholder(qapp, keyring):

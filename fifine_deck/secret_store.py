@@ -62,11 +62,21 @@ def get(secret_id: str) -> Optional[str]:
         return None
 
 
-def delete(secret_id: str) -> None:
+def delete(secret_id: str) -> bool:
+    """Remove a secret. Returns True when it is gone (deleted, or was never
+    there), False on a real failure (e.g. the keyring is locked) so the
+    caller's reap can keep the id and retry on a later save — swallowing the
+    failure meant a locked keyring orphaned the secret forever."""
     kr = _keyring()
     if kr is None:
-        return
+        return False
     try:
         kr.delete_password(SERVICE, secret_id)
-    except Exception:
-        pass
+        return True
+    except Exception as e:
+        # "No such password" means it is already gone — that IS success.
+        if type(e).__name__ == "PasswordDeleteError":
+            return True
+        log.warning("could not delete secret %s from the keyring: %s",
+                    secret_id, e)
+        return False

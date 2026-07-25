@@ -6,8 +6,11 @@ device and to draw the live preview in the GUI.
 from __future__ import annotations
 
 import io
+import logging
 import os
 from functools import lru_cache
+
+log = logging.getLogger(__name__)
 
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
@@ -70,12 +73,14 @@ def render_key(
             x = (size - icon.width) // 2
             y = pad if label else (size - icon.height) // 2
             img.paste(icon, (x, y), icon)
-        except Exception:
+        except Exception as e:
             # Broad on purpose: a bad icon must degrade to a bare-background
             # key, never break the whole frame render. UnidentifiedImageError
             # and truncated files raise OSError, but a valid-but-huge image
             # trips Pillow's DecompressionBombError, which is NOT an OSError.
-            pass
+            # But SAY so — a silently blank key (e.g. an SVG, which Pillow
+            # cannot decode) was indistinguishable from a missing icon.
+            log.warning("icon %s could not be decoded: %s", icon_path, e)
 
     if label:
         draw = ImageDraw.Draw(img)

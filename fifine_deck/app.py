@@ -44,12 +44,38 @@ def _ipc_socket_path() -> str:
     return os.path.join(_runtime_dir(), _IPC_NAME)
 
 
+def _socket_record_path() -> str:
+    """CONFIG_DIR file recording the ABSOLUTE socket path of the live server.
+
+    _runtime_dir() is env-dependent: a GUI launched by the session resolves
+    XDG_RUNTIME_DIR, but --quit from an env-stripped shell (cron, ssh, env -i)
+    falls back to /tmp, probes the wrong path, prints "No running instance"
+    with exit 0 while the app keeps running. CONFIG_DIR is env-stable and
+    user-owned (same rationale as the lock), so the server records its real
+    socket path here and every client tries that first."""
+    from .model import CONFIG_DIR
+    return os.path.join(CONFIG_DIR, _IPC_NAME + ".socket")
+
+
+def _recorded_socket():
+    try:
+        with open(_socket_record_path()) as f:
+            p = f.read().strip()
+        return p or None
+    except OSError:
+        return None
+
+
 def _liveness_paths() -> set:
-    """Every place a running instance's socket file may live: the current
-    home (absolute path) and the pre-0.8.2 temp-dir location, so a --quit
-    sent to an old instance across an upgrade still sees it exit."""
+    """Every place a running instance's socket file may live: the recorded
+    path, the current env's resolution, and the pre-0.8.2 temp-dir location,
+    so a --quit sent to an old instance across an upgrade still sees it exit."""
     import tempfile
-    return {_ipc_socket_path(), os.path.join(tempfile.gettempdir(), _IPC_NAME)}
+    paths = {_ipc_socket_path(), os.path.join(tempfile.gettempdir(), _IPC_NAME)}
+    rec = _recorded_socket()
+    if rec:
+        paths.add(rec)
+    return paths
 
 
 def _lock_path() -> str:
@@ -98,12 +124,20 @@ def _configure_logging() -> None:
 def _signal_existing(command: str) -> bool:
     """If an instance is already running, send it a command and return True.
 
-    Tries the current socket (absolute path in the runtime dir) first, then
-    the pre-0.8.2 location (bare name — Qt resolves it in ITS temp dir,
-    exactly as old builds did) so 'show'/'--quit' still reach an instance
-    that survived an upgrade."""
+    Tries the RECORDED socket path first (env-stable, written by the live
+    server — reaches it even from an env-stripped shell whose runtime-dir
+    resolution differs), then this env's resolution, then the pre-0.8.2
+    location (bare name — Qt resolves it in ITS temp dir, exactly as old
+    builds did) so 'show'/'--quit' still reach an instance across upgrades."""
     from PyQt6.QtNetwork import QLocalSocket
-    for target in (_ipc_socket_path(), _IPC_NAME):
+    targets = []
+    rec = _recorded_socket()
+    if rec:
+        targets.append(rec)
+    for t in (_ipc_socket_path(), _IPC_NAME):
+        if t not in targets:
+            targets.append(t)
+    for target in targets:
         sock = QLocalSocket()
         sock.connectToServer(target)
         if sock.waitForConnected(250):
@@ -148,6 +182,9 @@ def _autostart_exec() -> str:
         path = os.environ["APPIMAGE"]
         for ch in ("\\", '"', "`", "$"):
             path = path.replace(ch, "\\" + ch)
+        # A literal % must be doubled or the session manager parses it as a
+        # desktop-entry field code (%f, %u, ...), breaking the launch.
+        path = path.replace("%", "%%")
         return f'"{path}" --hidden'
     return "fifine-control-deck --hidden"
 
@@ -157,10 +194,18 @@ def set_autostart(enable: bool, config=None) -> int:
     .desktop entry. Returns 0 on success. `config` is accepted for call-site
     compatibility and unused."""
     path = autostart_file()
+    # Never raise: this runs inside Qt slots (the Options checkbox, the IPC
+    # handler for --enable-autostart), where an escaping OSError — full disk,
+    # a root-owned ~/.config/autostart — aborts the WHOLE app via qFatal,
+    # skipping controller.stop() and any pending debounced save.
     if enable:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            f.write(_AUTOSTART_ENTRY.format(exec=_autostart_exec()))
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(_AUTOSTART_ENTRY.format(exec=_autostart_exec()))
+        except OSError as e:
+            print(f"Could not enable autostart: {e}")
+            return 1
         print(f"Autostart enabled: {path}")
         print("The deck will run (hidden) on login; open the window by launching the app.")
     else:
@@ -169,6 +214,9 @@ def set_autostart(enable: bool, config=None) -> int:
             print("Autostart disabled.")
         except FileNotFoundError:
             print("Autostart was not enabled.")
+        except OSError as e:
+            print(f"Could not disable autostart: {e}")
+            return 1
     return 0
 
 
@@ -182,7 +230,10 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
 
     # Single instance: hand off to a running copy instead of starting a second
     # one (a second copy could not open the already-claimed device anyway).
-    if _signal_existing("quit" if quit_flag else "show"):
+    # --hidden hands off with "ping" (a no-op liveness probe), not "show":
+    # the autostart entry is literally `--hidden`, so a duplicate launch at
+    # login must not throw the window over the user's session.
+    if _signal_existing("quit" if quit_flag else ("ping" if hidden else "show")):
         if quit_flag:
             # Wait for the instance to actually exit: returning while it is
             # still shutting down makes "quit && relaunch" a race — the new
@@ -266,6 +317,13 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
                   f"{server.errorString()}", file=sys.stderr)
             os.close(lock_fd)
             return 1
+    # Record where we actually listen, so a --quit from an env-stripped shell
+    # (different runtime-dir resolution) still finds this instance.
+    try:
+        with open(_socket_record_path(), "w") as f:
+            f.write(server.fullServerName() or _ipc_socket_path())
+    except OSError:
+        log.debug("could not record the socket path", exc_info=True)
 
     ensure_dirs()
     try:
@@ -366,6 +424,10 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
     signal.set_wakeup_fd(-1)
     server.close()
     QLocalServer.removeServer(_ipc_socket_path())
+    try:
+        os.remove(_socket_record_path())
+    except OSError:
+        pass
     controller.stop()
     os.close(lock_fd)      # release the single-instance claim last
     return rc
@@ -388,7 +450,18 @@ def run_headless() -> int:
         log.error("another fifine Control Deck instance is already running "
                   "(GUI or headless); refusing to start a second one.")
         return 1
-    config = DeckConfig.load()
+    # An unreadable config (root-owned from a past sudo edit, EIO) must not
+    # crash-loop the systemd unit (Restart=on-failure, 2 s): fail once with an
+    # actionable message and EX_CONFIG, which the shipped unit declares as
+    # RestartPreventExitStatus so it stops cleanly instead of storming.
+    try:
+        config = DeckConfig.load()
+    except OSError as e:
+        log.error("configuration file could not be read: %s — fix its "
+                  "permissions (it may be owned by root from a sudo edit) "
+                  "or remove it to start fresh.", e)
+        os.close(lock_fd)
+        return 78                      # EX_CONFIG
     controller = DeckController(config)
 
     # Persist deck-driven state changes. In GUI mode the window saves on a deck
@@ -402,11 +475,16 @@ def run_headless() -> int:
     def _persist() -> None:
         if (config.brightness, config.active_profile_id) == (_saved["b"], _saved["p"]):
             return
-        _saved["b"], _saved["p"] = config.brightness, config.active_profile_id
+        # Stamp AFTER a successful save: stamping first meant one failed save
+        # (disk momentarily full) marked the change as persisted, and with the
+        # values now "unchanged" it was never written again for the process
+        # lifetime — silently lost on restart.
         try:
             config.save()
         except Exception as e:
             log.warning("headless: could not persist a deck change: %s", e)
+            return
+        _saved["b"], _saved["p"] = config.brightness, config.active_profile_id
 
     controller.on_brightness_changed = lambda _v: _persist()
     controller.on_page_changed = _persist      # also fires on profile switch
@@ -421,12 +499,21 @@ def run_headless() -> int:
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, _term)
+    # SIGHUP too: a --headless launched from a terminal dies with the terminal
+    # (hangup) — without this it got the default fatal handling, no teardown
+    # ran, and the deck was left showing stale icons.
+    signal.signal(signal.SIGHUP, _term)
     try:
         while True:
             time.sleep(0.5)
     except KeyboardInterrupt:
         pass
     finally:
+        # Ignore further signals during teardown: a second Ctrl+C (or a
+        # SIGTERM landing mid-stop) would raise inside controller.stop() and
+        # abort the cleanup half-done — LCDs not cleared, device not released.
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(sig, signal.SIG_IGN)
         controller.stop()
     return 0
 

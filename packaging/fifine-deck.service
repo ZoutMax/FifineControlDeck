@@ -11,6 +11,9 @@ After=graphical-session.target
 ExecStart=/usr/bin/fifine-control-deck --headless
 Restart=on-failure
 RestartSec=2
+# 78 = EX_CONFIG: the config file is unreadable — restarting cannot fix it,
+# so stop with the one actionable log line instead of a 2 s restart storm.
+RestartPreventExitStatus=78
 # Give wpctl / playerctl / xdg-open the right session bus + display.
 Environment=XDG_RUNTIME_DIR=%t
 

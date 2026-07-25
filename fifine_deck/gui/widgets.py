@@ -562,17 +562,30 @@ class ActionParamsWidget(QWidget):
             if sid and w.property("secret_unreadable"):
                 out["secret_id"] = sid
             return
+        had_sid = bool(sid)
         if not sid:
             sid = secret_store.new_id()
         if secret_store.store(sid, text):
             w.setProperty("secret_id", sid)
             w.setProperty("secret_unreadable", False)
             out["secret_id"] = sid
+        elif had_sid:
+            # A TRANSIENT store failure (keyring momentarily locked, D-Bus
+            # hiccup) on a key that already has a secure binding must NOT
+            # demote it to cleartext: emitting "password" here dropped
+            # secret_id, the next reap deleted the intact keyring copy, and
+            # the cleartext file became the only copy — silently, since the
+            # plaintext warning fires once per process. Keep the binding; the
+            # typed update simply did not take this time.
+            out["secret_id"] = sid
+            log.warning("keyring refused the password update; keeping the "
+                        "existing secure secret unchanged")
         else:
-            # No keyring, or it refused: the value can only be kept in
-            # config.json, in the clear. Warn once — the user chose a password
-            # action expecting it to be stored securely, and silently doing
-            # otherwise is exactly the kind of thing they'd want to know.
+            # No keyring, or it refused and there is nothing secure to keep:
+            # the value can only be kept in config.json, in the clear. Warn
+            # once — the user chose a password action expecting it to be
+            # stored securely, and silently doing otherwise is exactly the
+            # kind of thing they'd want to know.
             out["password"] = text
             self._warn_plaintext_once()
 
@@ -904,7 +917,10 @@ class ActionEditor(QWidget):
 
     def _browse_icon(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Choose icon", "", "Images (*.png *.jpg *.jpeg *.svg *.gif *.bmp)")
+            self, "Choose icon", "",
+            # No *.svg: the renderer decodes with Pillow, which cannot read
+            # SVG — offering it produced a silently blank key.
+            "Images (*.png *.jpg *.jpeg *.gif *.bmp)")
         if path:
             self._apply_picked_icon(path)
 

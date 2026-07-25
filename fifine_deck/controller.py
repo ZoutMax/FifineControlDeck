@@ -71,6 +71,7 @@ class DeckController:
         # "not started yet" (a cold try_open runs with _running still False).
         self._stopped = False
         self._gif_keys: set[int] = set()   # logical keys currently animated
+        self._flashed: set[int] = set()    # keys showing a pressed (flash) face
         self._nav: list = []               # folder navigation stack
         self._container = None             # current Folder, or None at profile root
 
@@ -247,9 +248,15 @@ class DeckController:
 
     def _on_removed(self, dev):
         if dev is self.device:
-            self._cancel_holds()
+            # Null the device BEFORE draining the holds: the reader thread can
+            # arm a NEW hold between a drain and the null, and that survivor
+            # would fire the long-press action ~0.5 s after unplug even though
+            # the user only tapped. With this ordering, a reader that saw a
+            # live device arms before the drain (drained here), and one that
+            # sees None self-cancels at the arm site.
             with self._lock:
                 self.device = None
+            self._cancel_holds()
             if self.on_disconnect:
                 self.on_disconnect()
 
@@ -448,10 +455,32 @@ class DeckController:
             return pages[self.page_index]
 
     # -- folder navigation -------------------------------------------------
+    def _reachable_folders(self) -> set:
+        """id() of every folder reachable from the active profile (recursive).
+        Callers hold self._lock."""
+        reachable: set = set()
+        stack = [self.config.active_profile()]
+        while stack:
+            holder = stack.pop()
+            for pg in getattr(holder, "pages", []):
+                for kc in pg.keys.values():
+                    if kc.folder is not None and id(kc.folder) not in reachable:
+                        reachable.add(id(kc.folder))
+                        stack.append(kc.folder)
+        return reachable
+
     def enter_folder(self, folder) -> None:
         if folder is None:
             return
         with self._lock:
+            # The folder was captured at PRESS time, but this runs on the
+            # action worker — possibly tens of seconds later (queued behind a
+            # multi-action). The GUI may have deleted its page meanwhile;
+            # installing an orphaned container then shows a location whose
+            # edits preview fine but never reach disk. Refuse it instead.
+            if id(folder) not in self._reachable_folders():
+                log.info("folder no longer exists; not entering it")
+                return
             self._nav.append((self._container, self.page_index))
             self._container = folder
             self.page_index = 0
@@ -491,16 +520,7 @@ class DeckController:
             cur = self._container
             if cur is None:
                 return False                 # already at root
-            reachable: set[int] = set()
-            stack = [self.config.active_profile()]
-            while stack:
-                holder = stack.pop()
-                for pg in getattr(holder, "pages", []):
-                    for kc in pg.keys.values():
-                        if kc.folder is not None and id(kc.folder) not in reachable:
-                            reachable.add(id(kc.folder))
-                            stack.append(kc.folder)
-            if id(cur) in reachable:
+            if id(cur) in self._reachable_folders():
                 return False
             self._nav = []
             self._container = None
@@ -629,6 +649,7 @@ class DeckController:
         then would leave the keys dark.
         """
         self._key_faces.clear()
+        self._flashed.clear()          # a fresh deck shows no pressed faces
 
     # -- off-thread GIF decoding -------------------------------------------
     def _gif_decode_ready(self, dev, index: int, path: str) -> bool:
@@ -960,13 +981,23 @@ class DeckController:
 
     def flash_key(self, index: int, pressed: bool) -> None:
         """Flash a key (brightened) on the device while pressed; restore it on
-        release. Skips animated (GIF) keys, which the GIF loop keeps repainting."""
-        if not self.config.glow:
+        release. Skips animated (GIF) keys, which the GIF loop keeps repainting.
+
+        The glow setting gates only the PRESS: the release restore runs for any
+        key we actually flashed (tracked in _flashed), regardless of what glow
+        says NOW — unticking glow (or an import setting it off) between press
+        and release used to skip the restore and freeze the brightened face
+        behind a matching stale fingerprint until reconnect."""
+        if pressed and not self.config.glow:
             return
         with self._lock:
             dev = self.device
             if not dev or index in self._gif_keys:
                 return
+            if not pressed:
+                if index not in self._flashed:
+                    return              # never flashed (e.g. glow was off)
+                self._flashed.discard(index)
             kc = self.page().keys.get(index, KeyConfig())
             if kc.action.type == "monitor":
                 # a static flash frame would overpaint the live readout until
@@ -978,6 +1009,8 @@ class DeckController:
                     kc.text_color, pressed=pressed)
                 dev.set_key_image_pil(index, img)
                 dev.refresh()
+                if pressed:
+                    self._flashed.add(index)
             except Exception as e:
                 log.error("flash key %s failed: %s", index, e)
 
@@ -1012,6 +1045,15 @@ class DeckController:
                     pending.timer = t
                     self._holds[index] = pending
                     t.start()
+                    # Unplug race: if _on_removed nulled the device after its
+                    # drain but before we armed, nothing will ever drain this
+                    # entry — self-cancel so the hold cannot fire against a
+                    # gone device (see _on_removed for the ordering proof).
+                    if self.device is None:
+                        t.cancel()
+                        with pending.lock:
+                            pending.fired = True
+                        self._holds.pop(index, None)
             else:
                 pending = self._holds.pop(index, None)
                 if pending is None:

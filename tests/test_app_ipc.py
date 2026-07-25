@@ -227,3 +227,53 @@ def test_autostart_exec_is_bundle_aware_and_quoted(monkeypatch):
     # the four XDG-reserved characters get backslash-escaped inside the quotes
     monkeypatch.setenv("APPIMAGE", '/tmp/we$ird"na`me.AppImage')
     assert app._autostart_exec() == '"/tmp/we\\$ird\\"na\\`me.AppImage" --hidden'
+
+
+def test_autostart_exec_doubles_percent(monkeypatch):
+    """A literal % in the AppImage path must become %% or the session manager
+    parses it as a desktop-entry field code. (wide-audit residual)"""
+    from fifine_deck import app
+    monkeypatch.setenv("FIFINE_IN_BUNDLE", "1")
+    monkeypatch.setenv("APPIMAGE", "/opt/100%tools/fifine.AppImage")
+    assert app._autostart_exec() == '"/opt/100%%tools/fifine.AppImage" --hidden'
+
+
+def test_set_autostart_survives_an_unwritable_target(monkeypatch, tmp_path, capsys):
+    """set_autostart runs inside Qt slots; an escaping OSError (full disk,
+    root-owned ~/.config/autostart) aborted the whole app via qFatal. It must
+    catch, report, and return nonzero instead. (wide-audit)"""
+    from fifine_deck import app
+    blocker = tmp_path / "blocker"
+    blocker.write_text("")                       # a FILE where a dir is needed
+    monkeypatch.setattr(app, "autostart_file",
+                        lambda: str(blocker / "sub" / "x.desktop"))
+    rc = app.set_autostart(True)
+    assert rc != 0                                # failed, but did NOT raise
+    assert "Could not enable autostart" in capsys.readouterr().out
+
+
+def test_socket_record_round_trip(monkeypatch, tmp_path):
+    """The server records its ABSOLUTE socket path in CONFIG_DIR so a --quit
+    from an env-stripped shell (different runtime-dir resolution) still finds
+    it; _liveness_paths must include the recorded path. (wide-audit)"""
+    from fifine_deck import app, model
+    monkeypatch.setattr(model, "CONFIG_DIR", str(tmp_path))
+    rec = app._socket_record_path()
+    assert rec.startswith(str(tmp_path))
+    with open(rec, "w") as f:
+        f.write("/run/user/1000/fifine-deck.sock\n")
+    assert app._recorded_socket() == "/run/user/1000/fifine-deck.sock"
+    assert "/run/user/1000/fifine-deck.sock" in app._liveness_paths()
+
+
+def test_hidden_handoff_pings_instead_of_showing(monkeypatch):
+    """The autostart entry is literally `--hidden`; a duplicate launch at login
+    must not throw the window over the user's session — it hands off with the
+    no-op 'ping', not 'show'. (wide-audit)"""
+    from fifine_deck import app
+    sent = []
+    monkeypatch.setattr(app, "_signal_existing",
+                        lambda cmd: (sent.append(cmd), True)[1])
+    rc = app.run_gui(hidden=True)
+    assert sent == ["ping"]
+    assert rc == 0
