@@ -366,11 +366,21 @@ def _send_hotkey(combo: str) -> None:
                        stderr=subprocess.DEVNULL)
     elif KEY_TOOL == "wtype":
         parts = combo.split("+")
+        # wtype's modifier vocabulary is shift/capslock/ctrl/logo/win/alt/altgr.
+        # An unknown name makes it exit before emitting anything, so the WHOLE
+        # combo is lost silently — map the app's right-hand modifier tokens
+        # onto their plain form (wtype has no left/right distinction).
         _modmap = {"ctrl": "ctrl", "control": "ctrl", "alt": "alt",
                    "shift": "shift", "super": "logo", "meta": "logo",
-                   "win": "logo", "logo": "logo"}
+                   "win": "logo", "logo": "logo",
+                   "ctrl_r": "ctrl", "shift_r": "shift", "alt_r": "alt",
+                   "altgr": "altgr"}
         mods = [p.strip().lower() for p in parts[:-1]]
         key = _to_x_keysym(parts[-1])           # canonical keysym, keep its case
+        # ...but "super" is an xdotool alias, not an xkbcommon keysym name, so
+        # a bare super/win key needs wtype's own spelling.
+        if key == "super":
+            key = "Super_L"
         args = ["wtype"]
         for m in mods:
             args += ["-M", _modmap.get(m, m)]

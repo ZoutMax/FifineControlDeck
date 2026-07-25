@@ -463,3 +463,27 @@ def test_volume_step_zero_is_a_no_op(monkeypatch):
     monkeypatch.setattr(actions, "AUDIO", "pipewire")
     actions._volume("up", "0")
     assert any("0%+" in str(a) for a in seen[0]), f"step 0 was not a no-op: {seen[0]}"
+
+
+def test_wtype_maps_right_hand_modifiers_and_super(monkeypatch):
+    """wtype rejects an unknown modifier name and exits before emitting
+    anything, so the WHOLE combo was silently dropped for ctrl_r/shift_r/alt_r
+    — tokens the app blesses and the other two backends handle. "super" is an
+    xdotool alias too, not an xkbcommon keysym. (round-7 audit)"""
+    calls = []
+    monkeypatch.setattr(actions, "KEY_TOOL", "wtype")
+    monkeypatch.setattr(actions, "_run", lambda argv, **k: calls.append(argv))
+
+    actions._send_hotkey("shift_r+a")
+    assert calls[-1] == ["wtype", "-M", "shift", "-k", "a", "-m", "shift"]
+
+    actions._send_hotkey("ctrl_r+c")
+    assert calls[-1] == ["wtype", "-M", "ctrl", "-k", "c", "-m", "ctrl"]
+
+    actions._send_hotkey("win")
+    assert calls[-1] == ["wtype", "-k", "Super_L"]
+
+    # a plain combo is unchanged
+    actions._send_hotkey("ctrl+shift+m")
+    assert calls[-1] == ["wtype", "-M", "ctrl", "-M", "shift", "-k", "m",
+                         "-m", "ctrl", "-m", "shift"]
