@@ -59,8 +59,14 @@ def test_autostart_cli_delegates_to_running_instance(monkeypatch, tmp_path):
     entry = tmp_path / "autostart" / "fifine-control-deck.desktop"
     monkeypatch.setattr(app, "autostart_file", lambda: str(entry))
     sent = []
-    monkeypatch.setattr(app, "_signal_existing",
-                        lambda cmd: (sent.append(cmd), True)[1])
+
+    def _healthy(cmd):
+        sent.append(cmd)
+        app._LAST_CMD_REPLY = "ok"     # a live instance handled it
+        app._LAST_CMD_ACKED = True
+        return True
+
+    monkeypatch.setattr(app, "_signal_existing", _healthy)
     monkeypatch.setattr(app, "set_autostart",
                         lambda *a, **k: pytest.fail("must delegate, not write"))
     import sys
@@ -148,7 +154,12 @@ def test_autostart_cli_reports_failure_when_the_change_never_lands(monkeypatch, 
     import sys
     entry = tmp_path / "autostart" / "fifine-control-deck.desktop"
     monkeypatch.setattr(app, "autostart_file", lambda: str(entry))
-    monkeypatch.setattr(app, "_signal_existing", lambda cmd: True)   # accepted...
+    def _healthy(cmd):
+        app._LAST_CMD_REPLY = "ok"     # accepted AND handled by a live loop...
+        app._LAST_CMD_ACKED = True
+        return True
+
+    monkeypatch.setattr(app, "_signal_existing", _healthy)
     monkeypatch.setattr(app, "set_autostart",
                         lambda *a, **k: pytest.fail("must not fall back to local"))
     monkeypatch.setattr(sys, "argv", ["fifine-control-deck", "--enable-autostart"])
@@ -275,7 +286,8 @@ def test_hidden_handoff_pings_instead_of_showing(monkeypatch):
 
     def healthy_instance(cmd):
         sent.append(cmd)
-        app._LAST_CMD_ACKED = True     # a live event loop answered the command
+        app._LAST_CMD_REPLY = "ok"     # a live event loop answered the command
+        app._LAST_CMD_ACKED = True
         return "/run/user/1000/x.sock"
 
     monkeypatch.setattr(app, "_signal_existing", healthy_instance)
@@ -284,18 +296,19 @@ def test_hidden_handoff_pings_instead_of_showing(monkeypatch):
     assert rc == 0
 
 
-def test_unacked_handoff_takes_over_the_dying_instances_lock(monkeypatch, tmp_path):
+def test_bye_handoff_takes_over_the_dying_instances_lock(monkeypatch, tmp_path):
     """A relaunch during the ~2 s quit teardown used to hand off 'show' to the
     dying instance (which never processes it) and exit 0 — leaving NO app
-    running. With no ack, the new launch must contend for the lock and, on
-    winning it, carry on starting up. (round-3 audit)
+    running. On an explicit 'bye' reply, the new launch must contend for the
+    lock and, on winning it, carry on starting up. (round-3/4 audits)
 
     We stop the takeover right after the lock is won by making the next step
     (QApplication) raise, proving the launch continued instead of exiting."""
     from fifine_deck import app
 
     def dying_instance(cmd):
-        app._LAST_CMD_ACKED = False    # connection accepted, nobody answered
+        app._LAST_CMD_REPLY = "bye"    # the peer said it is quitting
+        app._LAST_CMD_ACKED = False
         return "/run/user/1000/x.sock"
 
     monkeypatch.setattr(app, "_signal_existing", dying_instance)
@@ -310,3 +323,23 @@ def test_unacked_handoff_takes_over_the_dying_instances_lock(monkeypatch, tmp_pa
     monkeypatch.setattr(qtw, "QApplication", bail)
     with pytest.raises(_Bail):
         app.run_gui(hidden=False)      # continued launching = correct takeover
+
+
+def test_silent_handoff_exits_without_taking_the_lock(monkeypatch):
+    """NO reply means an old build (or a teardown too deep to answer): the
+    launch must exit at once — never contend for a lock a healthy old build
+    legitimately holds (that stole the single-instance role and launched a
+    duplicate), and never add seconds of stall to the common hand-off.
+    (round-4 audit)"""
+    from fifine_deck import app
+
+    def silent_instance(cmd):
+        app._LAST_CMD_REPLY = None     # connection accepted, nobody answered
+        app._LAST_CMD_ACKED = False
+        return "/run/user/1000/x.sock"
+
+    monkeypatch.setattr(app, "_signal_existing", silent_instance)
+    monkeypatch.setattr(
+        app, "_acquire_instance_lock",
+        lambda: pytest.fail("must not contend for the lock on a silent handoff"))
+    assert app.run_gui(hidden=False) == 0

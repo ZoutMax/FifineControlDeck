@@ -121,7 +121,8 @@ def _configure_logging() -> None:
                         format="%(levelname)s %(name)s: %(message)s")
 
 
-_LAST_CMD_ACKED = False   # set by _signal_existing: did the server answer?
+_LAST_CMD_ACKED = False   # set by _signal_existing: healthy server answered "ok"
+_LAST_CMD_REPLY = None    # raw reply: "ok" (healthy), "bye" (quitting), None
 
 
 def _signal_existing(command: str):
@@ -137,8 +138,9 @@ def _signal_existing(command: str):
     in _LAST_CMD_ACKED whether the server acknowledged the command — silence
     means the peer accepted the connection but has no live event loop (it is
     mid-teardown, or an old build without the ack)."""
-    global _LAST_CMD_ACKED
+    global _LAST_CMD_ACKED, _LAST_CMD_REPLY
     _LAST_CMD_ACKED = False
+    _LAST_CMD_REPLY = None
     from PyQt6.QtNetwork import QLocalSocket
     targets = []
     rec = _recorded_socket()
@@ -154,8 +156,11 @@ def _signal_existing(command: str):
             sock.write(command.encode())
             sock.flush()
             sock.waitForBytesWritten(500)
-            if sock.waitForReadyRead(1500) and bytes(sock.readAll()):
-                _LAST_CMD_ACKED = True
+            if sock.waitForReadyRead(1500):
+                reply = bytes(sock.readAll()).decode(errors="ignore").strip()
+                if reply:
+                    _LAST_CMD_REPLY = reply
+                    _LAST_CMD_ACKED = reply == "ok"
             sock.disconnectFromServer()
             return target
     return False
@@ -219,9 +224,14 @@ def set_autostart(enable: bool, config=None) -> int:
             # open("w") truncates BEFORE write can fail (ENOSPC/quota): a
             # leftover 0-byte entry would make every existence-based check
             # (the menu resync, the delegated CLI poll) report autostart as ON
-            # while it launches nothing. Remove the stump.
+            # while it launches nothing. Remove the stump — but ONLY a 0-byte
+            # one: when open() itself failed (EACCES on a root-owned entry in
+            # the user-owned dir) nothing was truncated, and unlinking would
+            # destroy a pre-existing WORKING entry (unlink needs only
+            # directory write permission, so it would succeed).
             try:
-                os.remove(path)
+                if os.path.getsize(path) == 0:
+                    os.remove(path)
             except OSError:
                 pass
             print(f"Could not enable autostart: {e}")
@@ -282,24 +292,26 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
             print("Signalled quit, but the instance is still running "
                   "after 10s.", file=sys.stderr)
             return 1
-        if _LAST_CMD_ACKED:
-            print("Signalled the running instance; exiting.")
-            return 0
-        # No ack: the peer accepted the connection but nothing processed the
-        # command — it is mid-teardown (controller.stop() blocks ~2 s with the
-        # socket still listening) and will be gone in a moment. Exiting now
-        # would leave the user with NO instance after a quit-then-relaunch.
-        # Contend for the lock: winning it proves that instance died, so carry
-        # on launching; losing it after the grace period means a live old
-        # build (no ack support) has it — hand off as before.
-        import time as _time
-        deadline = _time.monotonic() + 6.0
-        while _time.monotonic() < deadline:
-            takeover_fd = _acquire_instance_lock()
-            if takeover_fd is not None:
-                break
-            _time.sleep(0.2)
+        if _LAST_CMD_REPLY == "bye":
+            # The peer EXPLICITLY said it is quitting: it accepted the command
+            # but will not act on it and exits in a moment (controller.stop()
+            # blocks ~2 s). Exiting now would leave the user with NO instance
+            # after a quit-then-relaunch. Contend for its lock — it frees when
+            # the teardown finishes — and carry on launching as the successor.
+            import time as _time
+            deadline = _time.monotonic() + 6.0
+            while _time.monotonic() < deadline:
+                takeover_fd = _acquire_instance_lock()
+                if takeover_fd is not None:
+                    break
+                _time.sleep(0.2)
         if takeover_fd is None:
+            # "ok" (healthy — it handled the command), or NO reply (an old
+            # build without the protocol, or a teardown so deep nothing pumps
+            # the socket). Either way exit immediately, the pre-protocol
+            # behavior: never contend for a lock a HEALTHY old build holds —
+            # taking it would launch a duplicate instance — and never add
+            # seconds of stall to the common hand-off.
             print("Signalled the running instance; exiting.")
             return 0
     if quit_flag and not handoff:
@@ -409,6 +421,20 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
             return
         if conn.waitForReadyRead(250):
             cmd = bytes(conn.readAll()).decode(errors="ignore").strip()
+            if win._quitting:
+                # We are mid-quit: _quit's processEvents() pump can dispatch
+                # this handler while controller.stop() is still ahead. Do NOT
+                # process the command (show_and_raise would re-show the window
+                # _quit just hid) and do NOT claim health — tell the client we
+                # are dying so it takes over the lock once we release it.
+                try:
+                    conn.write(b"bye")
+                    conn.flush()
+                    conn.waitForBytesWritten(250)
+                except Exception:
+                    pass
+                conn.close()
+                return
             if cmd == "quit":
                 win._quit()
             elif cmd == "ping":
@@ -599,7 +625,15 @@ def main() -> int:
         # its back desyncs its toggle, and its next debounced autosave writes
         # the stale value straight back. Delegate to the running instance so
         # its toggle applies and persists the change.
-        if _signal_existing("autostart-on" if enable else "autostart-off"):
+        if (_signal_existing("autostart-on" if enable else "autostart-off")
+                and _LAST_CMD_ACKED):
+            # Only an "ok" reply proves a live event loop processed the
+            # command. A connection swallowed by a mid-teardown instance (or a
+            # "bye") would otherwise make the poll below wait 2 s and exit 1 —
+            # while falling through to a local write is safe: the peer is dead
+            # or dying, so nothing will clobber the file afterwards. (For old
+            # builds without the protocol this is simply the pre-delegation
+            # behavior.)
             # Confirm, don't assume. This used to print success the moment the
             # bytes were written, so a delegation that changed nothing still
             # exited 0. The entry file IS the state, so just watch it settle.
