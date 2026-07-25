@@ -1528,3 +1528,17 @@ def test_probe_balances_nvml_init_when_the_handle_query_fails(monkeypatch):
         probe(final=True)
         assert calls["init"] == 1 and calls["shutdown"] == 1, \
             f"{probe.__name__}: nvmlInit not balanced (init={calls['init']} shutdown={calls['shutdown']})"
+
+
+def test_monitor_render_survives_a_newline_in_the_readout():
+    """Same multiline-textlength crash as the key label, via a monitor key's
+    target field: from_params only strips the ends, so "eth0\\nfoo" reaches the
+    sub line ("no iface eth0\\nfoo") and raised out of the UNGUARDED GUI
+    preview path, leaving the grid half-built on any rebuild. Size-dependent —
+    the shrink loop only runs above ~72 px, i.e. the 96 px grid buttons and the
+    100 px device keys. (round-10 audit)"""
+    spec = MonitorSpec.from_params({"metric": "net", "target": "eth0\nfoo"})
+    reading = monitors.Reading(None, "n/a", "no iface eth0\nfoo", ok=False)
+    for size in (72, 96, 100):
+        assert monitors.render_monitor(size, spec, reading, []) is not None, \
+            f"render_monitor failed at {size} px"

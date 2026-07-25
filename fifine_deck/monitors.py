@@ -789,6 +789,14 @@ def _center_text(draw, text: str, size: int, y: float, fs: int, fill,
                  max_w: int | None = None):
     if not text:
         return
+    # Pillow's textlength() refuses multiline text, and a newline reaches here
+    # through a monitor key's target field (from_params only strips the ends),
+    # e.g. the "no iface eth0\nfoo" sub line. That raised out of the unguarded
+    # GUI preview path and left the grid half-built on any rebuild. One line,
+    # always — these are single-line readouts by design.
+    text = " ".join(text.split())
+    if not text:
+        return
     fs = max(8, fs)
     limit = max_w if max_w is not None else size - 6
     while fs > 8 and draw.textlength(text, font=_font(fs)) > limit:
