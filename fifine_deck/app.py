@@ -121,14 +121,24 @@ def _configure_logging() -> None:
                         format="%(levelname)s %(name)s: %(message)s")
 
 
-def _signal_existing(command: str) -> bool:
+_LAST_CMD_ACKED = False   # set by _signal_existing: did the server answer?
+
+
+def _signal_existing(command: str):
     """If an instance is already running, send it a command and return True.
 
     Tries the RECORDED socket path first (env-stable, written by the live
     server — reaches it even from an env-stripped shell whose runtime-dir
     resolution differs), then this env's resolution, then the pre-0.8.2
     location (bare name — Qt resolves it in ITS temp dir, exactly as old
-    builds did) so 'show'/'--quit' still reach an instance across upgrades."""
+    builds did) so 'show'/'--quit' still reach an instance across upgrades.
+
+    Returns the TARGET actually connected to (truthy) or False. Also records
+    in _LAST_CMD_ACKED whether the server acknowledged the command — silence
+    means the peer accepted the connection but has no live event loop (it is
+    mid-teardown, or an old build without the ack)."""
+    global _LAST_CMD_ACKED
+    _LAST_CMD_ACKED = False
     from PyQt6.QtNetwork import QLocalSocket
     targets = []
     rec = _recorded_socket()
@@ -144,8 +154,10 @@ def _signal_existing(command: str) -> bool:
             sock.write(command.encode())
             sock.flush()
             sock.waitForBytesWritten(500)
+            if sock.waitForReadyRead(1500) and bytes(sock.readAll()):
+                _LAST_CMD_ACKED = True
             sock.disconnectFromServer()
-            return True
+            return target
     return False
 
 
@@ -204,6 +216,14 @@ def set_autostart(enable: bool, config=None) -> int:
             with open(path, "w") as f:
                 f.write(_AUTOSTART_ENTRY.format(exec=_autostart_exec()))
         except OSError as e:
+            # open("w") truncates BEFORE write can fail (ENOSPC/quota): a
+            # leftover 0-byte entry would make every existence-based check
+            # (the menu resync, the delegated CLI poll) report autostart as ON
+            # while it launches nothing. Remove the stump.
+            try:
+                os.remove(path)
+            except OSError:
+                pass
             print(f"Could not enable autostart: {e}")
             return 1
         print(f"Autostart enabled: {path}")
@@ -233,7 +253,9 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
     # --hidden hands off with "ping" (a no-op liveness probe), not "show":
     # the autostart entry is literally `--hidden`, so a duplicate launch at
     # login must not throw the window over the user's session.
-    if _signal_existing("quit" if quit_flag else ("ping" if hidden else "show")):
+    takeover_fd = None
+    handoff = _signal_existing("quit" if quit_flag else ("ping" if hidden else "show"))
+    if handoff:
         if quit_flag:
             # Wait for the instance to actually exit: returning while it is
             # still shutting down makes "quit && relaunch" a race — the new
@@ -241,8 +263,16 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
             # stale code (bit us twice during 0.8.1 testing). Poll the IPC
             # socket FILE, never connect: older versions treat any incoming
             # connection as "show", which interrupts their own shutdown.
+            #
+            # Poll only the file we actually SIGNALLED: a stale socket file at
+            # another candidate path (a crashed pre-0.8.2 build, a leftover in
+            # /tmp) never disappears, and watching it made every --quit wait
+            # the full 10 s and exit 1 even though the quit succeeded.
             import time as _time
-            candidates = _liveness_paths()
+            if isinstance(handoff, str) and handoff != _IPC_NAME:
+                candidates = {handoff}
+            else:
+                candidates = _liveness_paths()   # bare name: real path unknown
             deadline = _time.monotonic() + 10.0
             while _time.monotonic() < deadline:
                 if not any(os.path.exists(p) for p in candidates):
@@ -252,9 +282,27 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
             print("Signalled quit, but the instance is still running "
                   "after 10s.", file=sys.stderr)
             return 1
-        print("Signalled the running instance; exiting.")
-        return 0
-    if quit_flag:
+        if _LAST_CMD_ACKED:
+            print("Signalled the running instance; exiting.")
+            return 0
+        # No ack: the peer accepted the connection but nothing processed the
+        # command — it is mid-teardown (controller.stop() blocks ~2 s with the
+        # socket still listening) and will be gone in a moment. Exiting now
+        # would leave the user with NO instance after a quit-then-relaunch.
+        # Contend for the lock: winning it proves that instance died, so carry
+        # on launching; losing it after the grace period means a live old
+        # build (no ack support) has it — hand off as before.
+        import time as _time
+        deadline = _time.monotonic() + 6.0
+        while _time.monotonic() < deadline:
+            takeover_fd = _acquire_instance_lock()
+            if takeover_fd is not None:
+                break
+            _time.sleep(0.2)
+        if takeover_fd is None:
+            print("Signalled the running instance; exiting.")
+            return 0
+    if quit_flag and not handoff:
         print("No running instance to quit.")
         return 0
 
@@ -274,15 +322,17 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
     # atomic flock — see _acquire_instance_lock for why the socket itself
     # can't play this role (the 0.8.1 audit found the socket-based recovery
     # still racing two launches into two live instances).
-    lock_fd = _acquire_instance_lock()
+    lock_fd = takeover_fd if takeover_fd is not None else _acquire_instance_lock()
     if lock_fd is None:
         # A live instance holds the lock but didn't answer the probe above —
         # it is mid-startup (lock claimed, socket not up yet). Give it a
-        # moment and hand off.
+        # moment and hand off. Same hidden rule as the fast path: a --hidden
+        # duplicate (two autostart entries racing at login) sends the no-op
+        # "ping", not "show", so it cannot pop the window over the session.
         import time as _time
         for _ in range(20):
             _time.sleep(0.1)
-            if _signal_existing("show"):
+            if _signal_existing("ping" if hidden else "show"):
                 return 0
         # The lock is held by something that will not answer the socket: either
         # a GUI wedged mid-startup, or a headless instance, which holds the
@@ -375,6 +425,17 @@ def run_gui(quit_flag: bool = False, hidden: bool = False) -> int:
                 win.apply_autostart(cmd == "autostart-on")
             else:
                 win.show_and_raise()
+            # Ack the command: a client that gets this byte KNOWS a live event
+            # loop processed it. A dying instance (blocked ~2 s in
+            # controller.stop() with the socket still up) accepts the
+            # connection at the kernel level but never answers — the client
+            # uses that silence to detect the handoff went nowhere.
+            try:
+                conn.write(b"ok")
+                conn.flush()
+                conn.waitForBytesWritten(250)
+            except Exception:
+                pass
         conn.close()
 
     server.newConnection.connect(_on_conn)

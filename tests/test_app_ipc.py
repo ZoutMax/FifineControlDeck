@@ -272,8 +272,41 @@ def test_hidden_handoff_pings_instead_of_showing(monkeypatch):
     no-op 'ping', not 'show'. (wide-audit)"""
     from fifine_deck import app
     sent = []
-    monkeypatch.setattr(app, "_signal_existing",
-                        lambda cmd: (sent.append(cmd), True)[1])
+
+    def healthy_instance(cmd):
+        sent.append(cmd)
+        app._LAST_CMD_ACKED = True     # a live event loop answered the command
+        return "/run/user/1000/x.sock"
+
+    monkeypatch.setattr(app, "_signal_existing", healthy_instance)
     rc = app.run_gui(hidden=True)
     assert sent == ["ping"]
     assert rc == 0
+
+
+def test_unacked_handoff_takes_over_the_dying_instances_lock(monkeypatch, tmp_path):
+    """A relaunch during the ~2 s quit teardown used to hand off 'show' to the
+    dying instance (which never processes it) and exit 0 — leaving NO app
+    running. With no ack, the new launch must contend for the lock and, on
+    winning it, carry on starting up. (round-3 audit)
+
+    We stop the takeover right after the lock is won by making the next step
+    (QApplication) raise, proving the launch continued instead of exiting."""
+    from fifine_deck import app
+
+    def dying_instance(cmd):
+        app._LAST_CMD_ACKED = False    # connection accepted, nobody answered
+        return "/run/user/1000/x.sock"
+
+    monkeypatch.setattr(app, "_signal_existing", dying_instance)
+    monkeypatch.setattr(app, "_acquire_instance_lock", lambda: 99)   # lock won
+
+    class _Bail(Exception):
+        pass
+
+    import PyQt6.QtWidgets as qtw
+    def bail(*a, **k):
+        raise _Bail
+    monkeypatch.setattr(qtw, "QApplication", bail)
+    with pytest.raises(_Bail):
+        app.run_gui(hidden=False)      # continued launching = correct takeover

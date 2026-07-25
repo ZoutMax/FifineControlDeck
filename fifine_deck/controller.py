@@ -481,6 +481,13 @@ class DeckController:
             if id(folder) not in self._reachable_folders():
                 log.info("folder no longer exists; not entering it")
                 return
+            # Already inside it: a folder key tapped twice while the action
+            # worker was busy queues enter_folder twice with the same Folder —
+            # the second install would nest it into itself (breadcrumb
+            # 'Folder ▸ Folder', Back appearing dead for one press per extra
+            # tap). Entering where we already are is a no-op.
+            if folder is self._container:
+                return
             self._nav.append((self._container, self.page_index))
             self._container = folder
             self.page_index = 0
@@ -1007,11 +1014,20 @@ class DeckController:
                 img = rendering.render_key(
                     dev.KEY_PIXEL_WIDTH, kc.label, kc.icon, kc.bg_color,
                     kc.text_color, pressed=pressed)
-                dev.set_key_image_pil(index, img)
+                res = dev.set_key_image_pil(index, img)
                 dev.refresh()
-                if pressed:
+                if res is None or res != 0:
+                    # The device did not accept the write (same non-zero /
+                    # no-handle contract render_key acts on). The physical key
+                    # may still show the OTHER face; drop its fingerprint so
+                    # the next render really rewrites instead of skipping on
+                    # an "unchanged" signature — a failed release-restore
+                    # otherwise froze the brightened face until reconnect.
+                    self._key_faces.pop(index, None)
+                elif pressed:
                     self._flashed.add(index)
             except Exception as e:
+                self._key_faces.pop(index, None)
                 log.error("flash key %s failed: %s", index, e)
 
     def _key_callback(self, device, event):

@@ -46,6 +46,7 @@ def warned(monkeypatch):
     # The once-per-run flag is process-wide (deliberately: a new editor is
     # built per key selection); reset it so each test starts unwarned.
     monkeypatch.setattr(widgets, "_PLAINTEXT_WARNED", False)
+    monkeypatch.setattr(widgets, "_UPDATE_REFUSED_WARNED", False)
     return seen
 
 
@@ -135,7 +136,11 @@ def test_replacing_under_a_fully_locked_keyring_keeps_the_secure_binding(qapp, k
     got = w.get_action()
     assert got.params.get("secret_id") == "pw-abc"      # binding preserved
     assert "password" not in got.params                 # nothing in cleartext
-    assert not warned                                   # no plaintext modal
+    # The user IS told (round-3 audit: a silent discard read as success) —
+    # but with the update-refused message, never the cleartext one.
+    assert warned and "refused" in warned[0]
+    # ...and never the plaintext-fallback dialog (its distinctive phrase):
+    assert all("configuration file in cleartext" not in m for m in warned)
 
 
 def test_unreadable_secret_shows_a_placeholder(qapp, keyring):

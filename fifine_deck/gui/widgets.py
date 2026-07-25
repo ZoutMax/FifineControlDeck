@@ -62,6 +62,7 @@ CURRENT_PAGE_ID_PROVIDER: Callable[[], str] | None = None
 
 # One cleartext-fallback warning per app run (see _warn_plaintext_once).
 _PLAINTEXT_WARNED = False
+_UPDATE_REFUSED_WARNED = False
 
 MIME_ACTION = "application/x-fifine-action"
 MIME_KEY = "application/x-fifine-key"    # dragging a key to rearrange it
@@ -569,6 +570,8 @@ class ActionParamsWidget(QWidget):
             w.setProperty("secret_id", sid)
             w.setProperty("secret_unreadable", False)
             out["secret_id"] = sid
+            w.setStyleSheet("")            # clear any earlier refused marker
+            w.setToolTip("")
         elif had_sid:
             # A TRANSIENT store failure (keyring momentarily locked, D-Bus
             # hiccup) on a key that already has a secure binding must NOT
@@ -580,6 +583,14 @@ class ActionParamsWidget(QWidget):
             out["secret_id"] = sid
             log.warning("keyring refused the password update; keeping the "
                         "existing secure secret unchanged")
+            # SAY it in the UI too: the field shows the newly typed text and
+            # the save completes, so with only a log line the user believes
+            # the change took while the key keeps typing the OLD password.
+            w.setStyleSheet("QLineEdit{border:1px solid #d9534f;}")
+            w.setToolTip("The keyring refused the update — the previous "
+                         "password is still active. Unlock the keyring and "
+                         "retype to replace it.")
+            self._warn_update_refused_once()
         else:
             # No keyring, or it refused and there is nothing secure to keep:
             # the value can only be kept in config.json, in the clear. Warn
@@ -588,6 +599,21 @@ class ActionParamsWidget(QWidget):
             # kind of thing they'd want to know.
             out["password"] = text
             self._warn_plaintext_once()
+
+    def _warn_update_refused_once(self):
+        # Once per process, like the plaintext warning: _collect_password runs
+        # on every edit tick, and a modal per keystroke would be unbearable.
+        # The red border + tooltip stay as the persistent per-field signal.
+        global _UPDATE_REFUSED_WARNED
+        if _UPDATE_REFUSED_WARNED:
+            return
+        _UPDATE_REFUSED_WARNED = True
+        QMessageBox.warning(
+            self, "Password not updated",
+            "The keyring refused to store the new password (it may be "
+            "locked), so the PREVIOUS password is still active for this "
+            "key.\n\nUnlock the keyring and retype the password to replace "
+            "it. It was not saved in cleartext.")
 
     def _warn_plaintext_once(self):
         # Process-wide, not per-instance: a new editor is built on every key

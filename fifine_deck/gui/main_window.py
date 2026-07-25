@@ -682,11 +682,24 @@ class MainWindow(QMainWindow):
         self._queue_save()
 
     def _del_page(self):
-        cont = self._container()
-        if len(cont.pages) <= 1:
+        # Read container + index ATOMICALLY and clamped: the action worker
+        # mutates both from a deck key (go_back swaps container AND index
+        # together under the controller lock), so two unlocked reads here
+        # could pair a 1-page folder with the profile's page_index and raise
+        # IndexError inside a Qt slot — which qFatals the whole app.
+        with self.controller._lock:
+            cont = self._container()
+            pages = cont.pages
+            if len(pages) <= 1:
+                pages_too_few = True
+                page = None
+            else:
+                pages_too_few = False
+                idx = max(0, min(self.controller.page_index, len(pages) - 1))
+                page = pages[idx]
+        if pages_too_few:
             QMessageBox.information(self, "Delete page", "At least one page is required.")
             return
-        page = cont.pages[self.controller.page_index]
         # Ask before destroying work. The "–" button is a 32 px square right
         # beside "+" and "⇅", one misclick takes every key on the page plus any
         # folder tree hanging off it at unlimited depth, and the autosave 600 ms
