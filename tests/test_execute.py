@@ -189,6 +189,13 @@ def test_brightness_and_goto_page_accept_comma_and_guard_bad_values():
     assert ("set_brightness", 10) in ctx.calls          # bad value -> default, NOT a no-op
     assert ("goto_page", 2) in ctx.calls                # "3,0" -> page 3 -> 0-based 2
     assert ("goto_page", 0) in ctx.calls                # bad -> page 1 -> 0-based 0
+    # infinities: int(float("1e999")) raises OverflowError, which the first
+    # guard missed — the action was dropped instead of falling back (wide-audit)
+    ctx2 = Ctx()
+    actions.execute(Action("brightness", {"mode": "set", "value": "1e999"}), ctx2)
+    actions.execute(Action("goto_page", {"page": "1e999"}), ctx2)
+    assert ("set_brightness", 10) in ctx2.calls
+    assert ("goto_page", 0) in ctx2.calls
 
 
 # -- deck-side actions are delegated to the context --------------------------

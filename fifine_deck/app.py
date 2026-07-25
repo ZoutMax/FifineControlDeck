@@ -142,7 +142,13 @@ def _autostart_exec() -> str:
     at $APPIMAGE; the .deb (/usr/bin) and snap (/snap/bin) keep the PATH command.
     """
     if os.environ.get("FIFINE_IN_BUNDLE") == "1" and os.environ.get("APPIMAGE"):
-        return f"{os.environ['APPIMAGE']} --hidden"
+        # Desktop-entry Exec quoting: the path must be double-quoted or a space
+        # (or ", `, $, \) in it silently breaks start-on-login; inside quotes
+        # those four characters are backslash-escaped per the XDG spec.
+        path = os.environ["APPIMAGE"]
+        for ch in ("\\", '"', "`", "$"):
+            path = path.replace(ch, "\\" + ch)
+        return f'"{path}" --hidden'
     return "fifine-control-deck --hidden"
 
 

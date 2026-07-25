@@ -342,6 +342,14 @@ class MainWindow(QMainWindow):
         self._deselect()
         self.controller.apply_brightness()
         self.controller.render_page()
+        # Adopt the imported config's secrets as owned WITHOUT reaping the old
+        # ones: the pre-import backup we just wrote still references them, so
+        # deleting them would break a restore-from-backup. Adopt BEFORE the
+        # save below — if that save fails and we return early, the in-memory
+        # config is already the imported one, and a later autosave's reap would
+        # otherwise compute the pre-import secrets as "dropped" and delete
+        # exactly what the backup needs.
+        self._owned_secret_ids = set(iter_config_secret_ids(self.config))
         # Guarded like _autosave is. A bare save() here meant that on failure
         # the grid already showed the imported config, nothing had reached the
         # disk, this status line never ran, and the user saw only a traceback
@@ -356,11 +364,6 @@ class MainWindow(QMainWindow):
                 f"written to disk:\n{e}\n\nYour previous configuration is at\n"
                 f"{backup}")
             return
-        # Adopt the imported config's secrets as owned WITHOUT reaping the old
-        # ones: the pre-import backup we just wrote still references them, so
-        # deleting them would break a restore-from-backup. (This is why the
-        # audit flagged the reap as correct for a type-change but NOT for import.)
-        self._owned_secret_ids = set(iter_config_secret_ids(self.config))
         self.statusBar().showMessage(f"Configuration imported (backup: {backup})", 6000)
 
     def show_and_raise(self):

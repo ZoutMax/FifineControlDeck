@@ -209,3 +209,21 @@ def test_headless_persists_deck_driven_profile_and_brightness(monkeypatch, tmp_p
     cfg.brightness = 42                      # deck changed brightness
     captured["brightness"](42)
     assert saves == ["P2"], "deck brightness change was not persisted"
+
+
+def test_autostart_exec_is_bundle_aware_and_quoted(monkeypatch):
+    """Wide-audit findings: (1) the AppImage has nothing on PATH, so the Exec
+    line must point at $APPIMAGE; (2) that path must be desktop-entry-quoted or
+    a space (or $, ", backtick) in it silently breaks start-on-login."""
+    from fifine_deck import app
+    # normal install: plain PATH command
+    monkeypatch.delenv("FIFINE_IN_BUNDLE", raising=False)
+    monkeypatch.delenv("APPIMAGE", raising=False)
+    assert app._autostart_exec() == "fifine-control-deck --hidden"
+    # AppImage with a space in the path: quoted verbatim
+    monkeypatch.setenv("FIFINE_IN_BUNDLE", "1")
+    monkeypatch.setenv("APPIMAGE", "/home/u/My Apps/fifine.AppImage")
+    assert app._autostart_exec() == '"/home/u/My Apps/fifine.AppImage" --hidden'
+    # the four XDG-reserved characters get backslash-escaped inside the quotes
+    monkeypatch.setenv("APPIMAGE", '/tmp/we$ird"na`me.AppImage')
+    assert app._autostart_exec() == '"/tmp/we\\$ird\\"na\\`me.AppImage" --hidden'

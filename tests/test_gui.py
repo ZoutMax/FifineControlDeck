@@ -592,6 +592,22 @@ def test_on_edit_survives_deselect_during_nested_modal(qapp):
     assert ed._kc is None              # stayed deselected; the edit was cleanly skipped
 
 
+def test_on_edit_survives_deselect_during_hold_action_modal(qapp):
+    """Wide-audit finding: the earlier fix re-validated after params.get_action()
+    but the HOLD editor's get_action() (same plaintext-password modal) ran later,
+    unguarded — the same deck page change mid-modal crashed the edit."""
+    from fifine_deck.model import Action
+    ed, kc = _editor_with_key("launch_app", {"command": "obs"}, "home")
+
+    def deselecting_hold_get_action():
+        ed._kc = None                  # page switch lands during the hold modal
+        return Action()
+
+    ed.hold_params.get_action = deselecting_hold_get_action
+    ed._on_edit()                      # pre-fix: AttributeError on _kc.label
+    assert ed._kc is None
+
+
 def test_custom_file_icon_is_never_auto_replaced(qapp, tmp_path):
     from fifine_deck.gui.widgets import ActionEditor
     from fifine_deck.model import KeyConfig, Action
@@ -1790,19 +1806,44 @@ def test_reordering_pages_while_deck_leaves_a_folder_does_not_crash(win, monkeyp
 
 
 def test_clearing_a_password_key_deletes_its_keyring_secret(win, monkeypatch):
-    """Confirmed audit finding: secret_store.delete had no production caller, so
-    removing a password key orphaned its secret in the keyring forever."""
+    """Clearing a password key must remove its keyring secrets — but only AFTER
+    the config without them is saved (reap-at-save). Deleting inside _clear_key
+    itself meant a failed save left the on-disk config referencing dead secrets
+    (wide-audit finding); a leak on permanent save failure is the safe direction."""
     from fifine_deck import secret_store
     deleted = []
     monkeypatch.setattr(secret_store, "delete", lambda sid: deleted.append(sid))
     w, cfg, c = win
+    monkeypatch.setattr(cfg, "save", lambda *a, **k: None)   # saves succeed
     kc = cfg.active_profile().pages[0].key(1)
     kc.action = mw.Action("password", {"secret_id": "pw-xyz"})
     kc.hold_action = mw.Action("password", {"secret_id": "pw-hold"})
+    w._autosave()                          # adopt: reap now owns pw-xyz/pw-hold
     w.editor.set_key(kc, 1)
     w.editor._clear_key()
+    assert deleted == [], "must NOT delete before the config is saved"
+    w._autosave()                          # save succeeds -> reap fires
     assert "pw-xyz" in deleted and "pw-hold" in deleted, \
-        f"password secrets not deleted on clear: {deleted}"
+        f"password secrets not reaped after a successful save: {deleted}"
+
+
+def test_clear_key_keeps_secrets_while_saves_fail(win, monkeypatch):
+    """The other half of the same finding: while every save FAILS, the secrets
+    must survive — the on-disk config still references them."""
+    from fifine_deck import secret_store
+    deleted = []
+    monkeypatch.setattr(secret_store, "delete", lambda sid: deleted.append(sid))
+    w, cfg, c = win
+    monkeypatch.setattr(cfg, "save", lambda *a, **k: None)
+    kc = cfg.active_profile().pages[0].key(1)
+    kc.action = mw.Action("password", {"secret_id": "pw-keep"})
+    w._autosave()                          # adopted
+    w.editor.set_key(kc, 1)
+    w.editor._clear_key()
+    def boom(*a, **k): raise OSError("disk full")
+    monkeypatch.setattr(cfg, "save", boom)
+    w._autosave()                          # save fails -> reap must not run
+    assert deleted == [], "secrets deleted although the save failed"
 
 
 def test_type_change_reaps_orphaned_secret_on_save(win, monkeypatch):
@@ -1850,6 +1891,40 @@ def test_import_does_not_reap_secrets_referenced_by_the_backup(win, monkeypatch,
     w._import_config()
     assert deleted == []                        # backup still references pw-old
     assert "pw-old" not in w._owned_secret_ids  # but it is no longer "owned"
+
+
+def test_failed_import_save_still_protects_pre_import_secrets(win, monkeypatch,
+                                                              tmp_path):
+    """Wide-audit finding: when the FINAL save of an import failed, the early
+    return skipped adopting _owned_secret_ids — the in-memory config was already
+    the imported one, so the NEXT successful autosave computed the pre-import
+    secrets as dropped and reaped exactly what the .bak restore needs. Adoption
+    must happen before the save."""
+    import json as _json
+    from fifine_deck import secret_store
+    deleted = []
+    monkeypatch.setattr(secret_store, "delete", lambda sid: deleted.append(sid))
+    w, cfg, c = win
+    cfg.active_profile().pages[0].key(1).action = mw.Action(
+        "password", {"secret_id": "pw-old"})
+    w._owned_secret_ids = set(mw.iter_config_secret_ids(cfg))
+    donor = DeckConfig()
+    path = tmp_path / "donor.json"
+    path.write_text(_json.dumps(donor.to_dict()))
+    monkeypatch.setattr(mw.QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(path), "")))
+    _AutoBox.answer = QMessageBox.StandardButton.Yes
+    # backup save (has a path) succeeds; the final save (no args) fails
+    real_save = cfg.save
+    def picky_save(*a, **k):
+        if not a and not k:
+            raise OSError("disk full")
+    monkeypatch.setattr(cfg, "save", picky_save)
+    w._import_config()                          # final save fails, early return
+    assert "pw-old" not in w._owned_secret_ids  # adopted BEFORE the save
+    monkeypatch.setattr(cfg, "save", lambda *a, **k: None)
+    w._autosave()                               # next autosave succeeds
+    assert deleted == [], "pre-import secrets reaped; .bak restore is broken"
 
 
 def test_quit_is_idempotent(win, monkeypatch):

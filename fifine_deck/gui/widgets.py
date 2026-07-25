@@ -862,14 +862,13 @@ class ActionEditor(QWidget):
                         "The key changed while the question was open, so "
                         "nothing was cleared. Select it again and retry.")
                     return
-        # Delete any keyring secret this key owned (a "type password" action, in
-        # its action, hold action, a multi-step, or a folder key) BEFORE we drop
-        # the references — otherwise the secret orphans in the keyring forever,
-        # since nothing else ever calls secret_store.delete.
-        from ..model import iter_key_secret_ids
-        from .. import secret_store
-        for sid in set(iter_key_secret_ids(self._kc)):
-            secret_store.delete(sid)
+        # Keyring secrets this key owned are NOT deleted here. Deleting before
+        # the save meant a failed save left the on-disk config still referencing
+        # secrets that no longer exist. Dropping the references below and
+        # emitting changed queues a save, and MainWindow's reap-at-save deletes
+        # them only AFTER the config without them is safely on disk — so disk
+        # and keyring can never diverge (a leak on permanent save failure is the
+        # safe direction).
         default = KeyConfig()
         self._kc.label = default.label
         self._kc.icon = default.icon
@@ -933,6 +932,12 @@ class ActionEditor(QWidget):
         # like the sibling _clear_key / _apply_picked_icon paths already do.
         if self._kc is None or self._kc is not kc:
             return
+        # Same hazard for the HOLD action editor: its get_action() can open the
+        # same plaintext-password modal, so fetch it here and re-validate again
+        # before mutating anything below.
+        new_hold = self.hold_params.get_action()
+        if self._kc is None or self._kc is not kc:
+            return
         prev_action = self._last_action
         self._last_action = new_action
         self._last_action_sig = self._action_sig(new_action)
@@ -956,7 +961,7 @@ class ActionEditor(QWidget):
         self._kc.bg_color = self.bg_btn.color()
         self._kc.text_color = self.fg_btn.color()
         self._kc.action = new_action
-        self._kc.hold_action = self.hold_params.get_action()
+        self._kc.hold_action = new_hold
         self.changed.emit()
 
 

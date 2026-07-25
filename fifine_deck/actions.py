@@ -536,8 +536,9 @@ def execute(action, context: ActionContext | None = None) -> None:
         elif t == "goto_page" and context:
             try:
                 _page = int(float(str(p.get("page", "1")).strip().replace(",", ".")))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 _page = 1        # a bad value must not silently drop the action
+                                 # (OverflowError: int(float("1e999")) -> inf)
             context.goto_page(_page - 1)
         elif t == "switch_profile" and context:
             context.switch_profile(p.get("profile_id", ""))
@@ -555,8 +556,8 @@ def execute(action, context: ActionContext | None = None) -> None:
                     # this had no local guard, so any non-integer text escaped
                     # to the outer catch and the key became a silent no-op.
                     val = int(float(str(raw).strip().replace(",", ".")))
-                except (TypeError, ValueError):
-                    val = 10
+                except (TypeError, ValueError, OverflowError):
+                    val = 10     # OverflowError: int(float("1e999")) -> inf
             if mode == "set":
                 context.set_brightness(val)
             elif mode == "up":
