@@ -41,6 +41,15 @@ PY
     fi
 }
 
+close_notification() {
+    [ -f "$NOTIFID" ] || return 0
+    gdbus call --session --dest org.freedesktop.Notifications \
+        --object-path /org/freedesktop/Notifications \
+        --method org.freedesktop.Notifications.CloseNotification \
+        "$(cat "$NOTIFID")" >/dev/null 2>&1 || true
+    rm -f "$NOTIFID"
+}
+
 if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     # ---- second press: stop + transcribe + type -------------------------
     kill "$(cat "$PIDFILE")" 2>/dev/null
@@ -49,13 +58,7 @@ if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     # session begun by an older copy of this script may still have one.
     [ -f "$TICK" ] && kill "$(cat "$TICK")" 2>/dev/null
     rm -f "$TICK"
-    if [ -f "$NOTIFID" ]; then
-        gdbus call --session --dest org.freedesktop.Notifications \
-            --object-path /org/freedesktop/Notifications \
-            --method org.freedesktop.Notifications.CloseNotification \
-            "$(cat "$NOTIFID")" >/dev/null 2>&1 || true
-        rm -f "$NOTIFID"
-    fi
+    close_notification
     sleep 0.3                       # let the wav flush
     TEXT=$(SOCK="$SOCK" python3 - "$WAV" << 'PY'
 import os, socket, sys
@@ -93,6 +96,12 @@ PY
     fi
 else
     # ---- first press: start recording -----------------------------------
+    # A previous run may have hit the 90 s cap: parecord is gone, so we land
+    # here rather than in the stop branch, and its sticky critical
+    # notification would sit in the notification centre forever once we
+    # overwrite $NOTIFID below. Close it first.
+    close_notification
+    rm -f "$PIDFILE"
     ensure_server                    # warm the model while the user talks
     rm -f "$WAV"
     spd-say -w -r -10 "listening"    # cue BEFORE recording starts (blocks)

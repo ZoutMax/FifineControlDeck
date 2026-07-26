@@ -43,6 +43,37 @@ def _as_dict(v) -> dict:
     return v if isinstance(v, dict) else {}
 
 
+def _pages_shape_ok(pages, _depth: int = 0) -> bool:
+    """True if every page is a mapping whose keys/knobs are mappings, and every
+    nested folder holds a list of such pages.
+
+    Both structural gates stopped at profile -> pages, so a page whose "keys"
+    was a list, or a folder whose "pages" was a string, passed the gate and
+    then raised deeper inside from_dict — where nothing moves the file to
+    .corrupt, so the app simply failed to start on every launch. The depth cap
+    matches the step walker and stops a hand-built cycle.
+    """
+    if _depth > 32 or not isinstance(pages, list):
+        return False
+    for pg in pages:
+        if not isinstance(pg, dict):
+            return False
+        for field in ("keys", "knobs"):
+            if field in pg and not isinstance(pg[field], dict):
+                return False
+        for kc in (pg.get("keys") or {}).values():
+            if not isinstance(kc, dict):
+                return False
+            folder = kc.get("folder")
+            if folder is not None:
+                if not isinstance(folder, dict):
+                    return False
+                if "pages" in folder and not _pages_shape_ok(
+                        folder["pages"], _depth + 1):
+                    return False
+    return True
+
+
 def _as_str(v, default: str) -> str:
     """Coerce a scalar that must be a string. A null/number here would pass
     load() structurally and then crash the GUI at startup on every launch —
@@ -403,6 +434,8 @@ class DeckConfig:
         for p in profiles:
             if not isinstance(p, dict) or not isinstance(p.get("pages"), list):
                 return False
+            if not _pages_shape_ok(p["pages"]):
+                return False
         return True
 
     @staticmethod
@@ -449,6 +482,8 @@ class DeckConfig:
             return False
         for p in profiles:
             if not isinstance(p, dict) or not isinstance(p.get("pages"), list):
+                return False
+            if not _pages_shape_ok(p["pages"]):
                 return False
         return True
 
@@ -660,15 +695,20 @@ def _action_secret_ids(a):
     if a is None:
         return
     params = getattr(a, "params", None)
+    # Only STRING ids: params values are copied verbatim from JSON (unlike
+    # every other field, which goes through _as_str), so a list or object here
+    # reached set() in MainWindow.__init__ and raised "unhashable type" out of
+    # the window constructor — an unrecoverable startup loop, since the config
+    # is structurally valid and load()'s corrupt recovery never fires.
     if getattr(a, "type", None) == "password" and isinstance(params, dict):
         sid = params.get("secret_id")
-        if sid:
+        if sid and isinstance(sid, str):
             yield sid
     for inner in _iter_step_action_dicts(params):
         if inner.get("type") == "password":
             p = inner.get("params")
             sid = p.get("secret_id") if isinstance(p, dict) else None
-            if sid:
+            if sid and isinstance(sid, str):
                 yield sid
 
 

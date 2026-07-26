@@ -511,7 +511,15 @@ def _volume(cmd: str, step: str) -> None:
         log.warning("volume control needs pipewire (wpctl) or pulseaudio (pactl)")
 
 
-def execute(action, context: ActionContext | None = None) -> None:
+# Must match model._iter_step_action_dicts: the import warning walks nested
+# multi-steps only this deep, so anything the executor would run BELOW that
+# depth would run without ever being listed in the "this config runs shell
+# commands" dialog. Capping both at the same number keeps the promise.
+MAX_STEP_DEPTH = 32
+
+
+def execute(action, context: ActionContext | None = None,
+            _depth: int = 0) -> None:
     """Execute a single Action. Never raises; logs failures."""
     t = action.type
     p = action.params
@@ -604,6 +612,10 @@ def execute(action, context: ActionContext | None = None) -> None:
                 context.adjust_brightness(-abs(val))
         elif t == "multi":
             from .model import Action as _A
+            if _depth >= MAX_STEP_DEPTH:
+                log.warning("multi-action nested deeper than %d levels; "
+                            "not running the rest", MAX_STEP_DEPTH)
+                return
             for step in p.get("steps", []):
                 # A single malformed step (non-dict, or a bad "delay" like
                 # "0.5s") must not abort the remaining steps: the outer guard
@@ -611,7 +623,7 @@ def execute(action, context: ActionContext | None = None) -> None:
                 if not isinstance(step, dict):
                     continue
                 sub = _A.from_dict(step.get("action", step))
-                execute(sub, context)
+                execute(sub, context, _depth + 1)
                 try:
                     delay = float(step.get("delay", 0) or 0)
                 except (TypeError, ValueError):

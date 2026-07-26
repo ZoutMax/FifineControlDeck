@@ -61,6 +61,11 @@ def render_key(
     icon_path = assets.resolve_icon(icon_path)
     img = Image.new("RGB", (size, size), _hex(bg_color))
 
+    # Whether an icon was actually PAINTED — not merely configured. The text
+    # layout below shrinks the font and bottom-aligns it to make room for an
+    # icon; keying that off the path meant a deleted or undecodable icon left
+    # the label small and jammed against the bottom edge of an empty key.
+    drew_icon = False
     if icon_path and os.path.exists(icon_path):
         try:
             icon = Image.open(icon_path).convert("RGBA")
@@ -73,6 +78,7 @@ def render_key(
             x = (size - icon.width) // 2
             y = pad if label else (size - icon.height) // 2
             img.paste(icon, (x, y), icon)
+            drew_icon = True
         except Exception as e:
             # Broad on purpose: a bad icon must degrade to a bare-background
             # key, never break the whole frame render. UnidentifiedImageError
@@ -92,7 +98,7 @@ def render_key(
         label = " ".join(label.split())
     if label:
         draw = ImageDraw.Draw(img)
-        base_fs = max(10, int(size * (0.20 if icon_path else 0.24)))
+        base_fs = max(10, int(size * (0.20 if drew_icon else 0.24)))
         max_w = size - 6
         # Shrink the font a little so a short label like "Bright +" stays on one
         # line (matching the other keys) before we fall back to wrapping.
@@ -104,7 +110,7 @@ def render_key(
         lines = _wrap(draw, label, font, max_w)
         line_h = fs + 2
         total_h = line_h * len(lines)
-        y0 = (size - total_h) if icon_path else (size - total_h) // 2
+        y0 = (size - total_h) if drew_icon else (size - total_h) // 2
         y0 = max(0, min(y0, size - total_h))
         tcol = _hex(text_color, (255, 255, 255))
         for i, line in enumerate(lines):

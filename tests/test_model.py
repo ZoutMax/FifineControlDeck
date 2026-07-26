@@ -792,3 +792,47 @@ def test_iter_step_walk_terminates_on_a_cyclic_config():
     cyc["params"]["steps"] = [{"action": cyc}]
     cfg = _cfg_with_action({"type": "multi", "params": {"steps": [{"action": cyc}]}})
     assert isinstance(list(iter_command_actions(cfg)), list)   # no RecursionError
+
+
+def test_a_non_scalar_secret_id_cannot_break_startup():
+    """secret_id was the one string field skipping _as_str, so a JSON list or
+    object there reached set() in MainWindow.__init__ and raised "unhashable
+    type" out of the window constructor — an unrecoverable startup loop, since
+    the config is structurally valid and load()'s .corrupt recovery never
+    fires. (round-12 audit, HIGH)"""
+    for bad in (["pw-abc"], {"id": "pw-abc"}, 42, {"a": ["b"]}):
+        cfg = DeckConfig.from_dict({"profiles": [{"name": "P", "pages": [
+            {"keys": {"1": {"action": {"type": "password",
+                                       "params": {"secret_id": bad}}}}}]}]})
+        ids = set(iter_config_secret_ids(cfg))     # must not raise
+        assert all(isinstance(i, str) for i in ids)
+    # a real string id still comes through
+    cfg = DeckConfig.from_dict({"profiles": [{"name": "P", "pages": [
+        {"keys": {"1": {"action": {"type": "password",
+                                   "params": {"secret_id": "pw-ok"}}}}}]}]})
+    assert set(iter_config_secret_ids(cfg)) == {"pw-ok"}
+
+
+@pytest.mark.parametrize("data", [
+    {"profiles": [{"name": "P", "pages": [{"keys": ["nope"]}]}]},
+    {"profiles": [{"name": "P", "pages": [{"knobs": "nope"}]}]},
+    {"profiles": [{"name": "P", "pages": ["notadict"]}]},
+    {"profiles": [{"name": "P", "pages": [
+        {"keys": {"1": {"folder": {"pages": "nope"}}}}]}]},
+    {"profiles": [{"name": "P", "pages": [{"keys": {"1": "notadict"}}]}]},
+])
+def test_structural_gates_reject_wrong_typed_containers(data):
+    """Both gates stopped at profile->pages, so these shapes passed and then
+    raised deeper in from_dict — where nothing moves the file to .corrupt, so
+    the app failed to start on every launch. (round-12 audit)"""
+    assert DeckConfig.looks_like_config(data) is False
+    assert DeckConfig.is_loadable_shape(data) is False
+
+
+def test_structural_gates_still_accept_a_real_config():
+    """The tightened gates must not reject anything the app itself writes."""
+    cfg = DeckConfig()
+    cfg.active_profile().pages[0].key(1).folder = Folder(name="F")
+    data = cfg.to_dict()
+    assert DeckConfig.looks_like_config(data) is True
+    assert DeckConfig.is_loadable_shape(data) is True
