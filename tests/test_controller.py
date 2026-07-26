@@ -867,13 +867,19 @@ def test_flash_restores_even_if_glow_turned_off_mid_press():
     freezing the brightened face behind a matching stale fingerprint."""
     c, dev = _connected()
     try:
-        writes_before = len(dev.key_images)
+        # Compare the IMAGE actually sent, not the dict length: key_images is
+        # keyed by index, so len() never changes for the same key and the old
+        # assertion was true even when the release repainted nothing at all.
         c.flash_key(1, pressed=True)                          # glow on: flashes
         assert 1 in c._flashed
+        pressed_face = dev.key_images[1]
         c.config.glow = False                                 # user unticks glow
         c.flash_key(1, pressed=False)                         # release
         assert 1 not in c._flashed, "restore did not run"
-        assert len(dev.key_images) >= writes_before, "no restore write happened"
+        assert dev.key_images[1] is not pressed_face, \
+            "the release wrote nothing: the key stays visually stuck bright"
+        assert list(dev.key_images[1].getdata()) != list(pressed_face.getdata()), \
+            "the release rewrote the SAME brightened face"
     finally:
         c.stop()
 
