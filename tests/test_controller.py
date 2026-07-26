@@ -878,7 +878,7 @@ def test_flash_restores_even_if_glow_turned_off_mid_press():
         assert 1 not in c._flashed, "restore did not run"
         assert dev.key_images[1] is not pressed_face, \
             "the release wrote nothing: the key stays visually stuck bright"
-        assert list(dev.key_images[1].getdata()) != list(pressed_face.getdata()), \
+        assert dev.key_images[1].tobytes() != pressed_face.tobytes(), \
             "the release rewrote the SAME brightened face"
     finally:
         c.stop()
