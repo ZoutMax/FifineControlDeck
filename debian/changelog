@@ -1,3 +1,31 @@
+fifine-control-deck (0.12.9) noble; urgency=medium
+
+  * Hardening release from fifteen multi-agent audit rounds, including the
+    first audit of the vendored device SDK. No feature changes.
+  * Fixes three ways a configuration value could make the app unlaunchable
+    permanently: a newline in a key label, a non-string secret id, and a
+    non-UTF-8 byte in config.json. Such a file is now quarantined instead.
+  * Hotkeys with named or symbol keys (Escape, Tab, Delete, Page Up/Down,
+    F1-F24, right-hand modifiers, punctuation) now work on every keystroke
+    backend; several were silently dropped before.
+  * "Type text" no longer stops after about 200 characters.
+  * Quitting and relaunching immediately no longer leaves no instance running.
+  * The key editor no longer silently swallows edits after an error, and a
+    short-form multi-action step is no longer destroyed by editing the label.
+  * Page switches no longer leave a stale animation frame, a single-frame GIF
+    icon no longer animates forever, and a failed press-flash write no longer
+    leaves a key stuck bright.
+  * Deleting a page can no longer crash the app when the deck navigates at the
+    same moment; Import and Export survive malformed configurations.
+  * Keyring handling: a refused update no longer downgrades a stored password
+    to cleartext, failed deletions are retried, and secrets dropped just before
+    quitting are cleaned up.
+  * Security: the dictation helper keeps runtime files in a private per-user
+    directory instead of shared /tmp, and the "runs shell commands" import
+    warning can no longer be bypassed by deep nesting.
+
+ -- ZoutMax <150600436+ZoutMax@users.noreply.github.com>  Sun, 26 Jul 2026 11:55:42 +0200
+
 fifine-control-deck (0.12.8ppa1) resolute; urgency=medium
 
   * Build for resolute (25.04). No source changes from 0.12.8.

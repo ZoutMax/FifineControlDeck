@@ -4,6 +4,47 @@ All notable changes to **fifine Control Deck** are documented here. The format
 is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.12.9] - 2026-07-26
+
+Hardening release. Fifteen multi-agent audit rounds went through the whole
+codebase — including the first ever audit of the vendored device SDK — and
+everything they confirmed is fixed here, each with a regression test that was
+verified to fail beforehand. No feature changes.
+
+### Fixed
+- **The app could be made unlaunchable, permanently, by three different
+  configuration values.** A newline in a key label (pasted from anywhere), a
+  `secret_id` holding a list instead of a string, or a single non-UTF-8 byte
+  in `config.json` each crashed the window before it appeared — and because
+  the file was structurally valid, the corrupt-config recovery never fired, so
+  every later launch failed the same way. All three are handled now, and a
+  file that cannot be decoded is quarantined like any other bad config.
+- **Hotkeys with named or symbol keys work on every backend.** Escape, Tab,
+  Delete, Insert, Page Up/Down, F1–F24, the right-hand modifiers and the
+  punctuation keys were silently dropped on X11, and `alt+shift` or a lone
+  modifier was dropped on Wayland's wtype.
+- **"Type text" no longer stops halfway.** A long snippet was killed after
+  about 200 characters, leaving half a line in your document.
+- **Quitting and relaunching immediately no longer leaves nothing running.**
+- **The key editor no longer silently swallows your edits** after an error, and
+  a step stored in its short form is no longer destroyed by editing the label.
+- **Page switches no longer strand a stale animation frame**, a single-frame
+  GIF icon no longer animates forever, and a key no longer stays visually stuck
+  bright if a press-flash write fails.
+- **Deleting a page can no longer crash the app** when the deck navigates at
+  the same moment.
+- **Import and Export survive malformed configurations** instead of aborting.
+- **Keyring passwords are handled more carefully**: an update the keyring
+  refuses no longer silently downgrades a stored password to cleartext, a
+  failed deletion is retried rather than forgotten, and secrets dropped just
+  before quitting are cleaned up.
+
+### Security
+- The optional dictation helper keeps its runtime files in a private per-user
+  directory instead of shared `/tmp`.
+- The "this configuration runs shell commands" warning shown on import can no
+  longer be bypassed by deeply nesting the command.
+
 ## [0.12.8] - 2026-07-25
 
 Five fixes from a coverage-gap audit — a pass that first mapped which areas
