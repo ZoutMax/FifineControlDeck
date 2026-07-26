@@ -1,4 +1,4 @@
-fifine-control-deck (0.12.9) noble; urgency=medium
+fifine-control-deck (0.12.9ppa1) resolute; urgency=medium
 
   * Hardening release from fifteen multi-agent audit rounds, including the
     first audit of the vendored device SDK. No feature changes.
