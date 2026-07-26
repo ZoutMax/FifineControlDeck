@@ -687,8 +687,10 @@ class _StepRow(QFrame):
             # the whole action, silently destroyed the real sub-action.
             self.apw.set_action(Action.from_dict(step.get("action", step)))
             try:
+                # OverflowError too: int(float("1e999")) is inf, and a huge
+                # hand-edited delay crashed the editor rather than defaulting.
                 self.delay.setValue(float(step.get("delay", 0) or 0))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 pass
         else:
             self.apw.set_action(Action("launch_app", {}))

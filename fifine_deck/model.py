@@ -500,9 +500,18 @@ class DeckConfig:
         # would move the good config aside and replace it with a fresh default,
         # silently wiping the user's real configuration. So IO errors propagate;
         # only a genuine decode/shape problem triggers the destructive recovery.
-        with open(path) as f:
-            raw = f.read()
+        # Read BYTES and decode inside the try: text mode would decode here,
+        # outside it, and a non-UTF-8 byte (a label typed in a Latin-1 editor,
+        # a mangled sync, a torn write) raises UnicodeDecodeError — a
+        # ValueError, not an OSError — which escaped both this guard and every
+        # caller's `except OSError`. The GUI then died before any window
+        # appeared and headless restart-stormed, forever, with nothing on disk
+        # changed to break the loop. A broken *syntax* was recovered while
+        # broken *bytes* were a permanent brick.
+        with open(path, "rb") as f:
+            raw_bytes = f.read()
         try:
+            raw = raw_bytes.decode("utf-8")
             data = json.loads(raw)
             # from_dict is TOTAL: _as_dict/_as_str coerce anything parseable,
             # so it cannot raise on a wrong-SHAPED config — only a JSON syntax

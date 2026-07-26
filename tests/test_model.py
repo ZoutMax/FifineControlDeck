@@ -836,3 +836,17 @@ def test_structural_gates_still_accept_a_real_config():
     data = cfg.to_dict()
     assert DeckConfig.looks_like_config(data) is True
     assert DeckConfig.is_loadable_shape(data) is True
+
+
+def test_a_non_utf8_config_is_quarantined_not_fatal(tmp_path):
+    """load() read the file in TEXT mode outside its try, so a non-UTF-8 byte
+    raised UnicodeDecodeError — a ValueError, not an OSError — escaping both
+    the recovery and every caller's `except OSError`. The GUI then died before
+    any window appeared and headless restart-stormed, forever, since nothing on
+    disk changed. A French label saved by a Latin-1 editor is the realistic
+    case. (round-13 audit)"""
+    p = tmp_path / "c.json"
+    p.write_bytes(b'{"version":1,"profiles":[{"name":"Caf\xe9","pages":[{"keys":{}}]}]}')
+    cfg = DeckConfig.load(str(p))
+    assert cfg.profiles                              # started with defaults
+    assert (tmp_path / "c.json.corrupt").exists()    # original kept intact

@@ -72,6 +72,18 @@ class GifController:
         if not frames:
             return -1
 
+        # LOCAL PATCH: a single-frame image is not an animation. Registering it
+        # as one made the work loop rewrite the identical frame to the device
+        # ~10 times a second forever — pointless USB traffic that also blocked
+        # the key from ever being repainted by the normal render path, since
+        # the loop owns any key in _gif_map. Draw it once, statically.
+        if len(frames) < 2:
+            self._device.transport.set_key_image_stream(frames[0], hardware_key)
+            self._device.refresh()
+            with self._lock:
+                self._remove_stream(hardware_key)
+            return 0
+
         with self._lock:
             self._replace_stream(hardware_key, self._create_status(frames, delays))
         self._wake_event.set()

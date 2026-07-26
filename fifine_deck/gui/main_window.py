@@ -218,18 +218,31 @@ class MainWindow(QMainWindow):
             inner = step.get("action", step)
             if not isinstance(inner, dict):
                 return False
-            params = inner.get("params") or {}
+            # Type-check both, like every other steps consumer: a truthy
+            # non-dict params (a list) or non-list steps (a number) survives
+            # `or {}` / `or []` and then raises out of the Export slot — where
+            # nothing catches it, so the app can abort mid-export.
+            params = inner.get("params")
+            if not isinstance(params, dict):
+                return False
             if params.get("password"):
                 return True
             # a step may itself be a multi-action
-            return any(step_has(s) for s in (params.get("steps") or []))
+            steps = params.get("steps")
+            return any(step_has(s) for s in steps) if isinstance(
+                steps, (list, tuple)) else False
 
         def action_has(a) -> bool:
             if a is None:
                 return False
-            if a.params.get("password"):
+            params = getattr(a, "params", None)
+            if not isinstance(params, dict):
+                return False
+            if params.get("password"):
                 return True
-            return any(step_has(s) for s in (a.params.get("steps") or []))
+            steps = params.get("steps")
+            return any(step_has(s) for s in steps) if isinstance(
+                steps, (list, tuple)) else False
 
         def scan_container(cont) -> bool:
             for page in getattr(cont, "pages", []):

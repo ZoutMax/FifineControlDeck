@@ -516,3 +516,17 @@ def test_type_text_timeout_scales_with_the_payload(monkeypatch):
     assert seen.get("timeout", 8) > 8, "a 1000-char payload still uses the 8 s cap"
     actions._type_text("short")
     assert seen.get("timeout") >= 8, "short text must keep at least the default"
+
+
+def test_default_icon_survives_a_non_scalar_param():
+    """Params are copied verbatim from JSON, so a list/dict here is unhashable
+    and dict.get(raw) raised TypeError out of the drag-and-drop slot — dropping
+    an action onto such a key did nothing at all. (round-13 audit)"""
+    from fifine_deck.actions import default_icon_for
+    for t, params in (("volume", {"cmd": ["up"]}),
+                      ("media", {"cmd": {"a": 1}}),
+                      ("brightness", {"mode": 5})):
+        icon, label = default_icon_for(Action(t, params))
+        assert icon and label                         # fell back, did not raise
+    # the normal lookup still works
+    assert default_icon_for(Action("volume", {"cmd": "mute"}))[0] == "mute"

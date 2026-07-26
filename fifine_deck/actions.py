@@ -165,15 +165,22 @@ def default_icon_for(action) -> tuple[str, str]:
     so e.g. Volume up/down/mute each get their own icon."""
     t = action.type
     p = action.params
+    # Params values are copied verbatim from JSON, so a list or dict here is
+    # unhashable and dict.get(raw_value) raises TypeError — which escaped the
+    # drag-and-drop slot, so dropping an action onto such a key silently did
+    # nothing at all. Coerce to the string form the lookups expect.
+    def _pick(key: str, default: str) -> str:
+        v = p.get(key, default)
+        return v if isinstance(v, str) else default
     if t == "volume":
         return ({"up": "volume_up", "down": "volume_down", "mute": "mute"}
-                .get(p.get("cmd", "up"), "volume_up"), "Volume")
+                .get(_pick("cmd", "up"), "volume_up"), "Volume")
     if t == "media":
         return ({"play-pause": "play", "next": "next", "previous": "prev",
-                 "stop": "stop"}.get(p.get("cmd", "play-pause"), "play"), "Media")
+                 "stop": "stop"}.get(_pick("cmd", "play-pause"), "play"), "Media")
     if t == "brightness":
         return ({"up": "brightness_up", "down": "brightness_down",
-                 "set": "brightness_up"}.get(p.get("mode", "set"), "brightness_up"), "Bright")
+                 "set": "brightness_up"}.get(_pick("mode", "set"), "brightness_up"), "Bright")
     return ACTION_DEFAULT_ICON.get(t, ("", ""))
 
 
